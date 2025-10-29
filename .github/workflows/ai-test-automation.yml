@@ -1,0 +1,108 @@
+name: AI Test Automation
+
+on:
+  workflow_dispatch:
+
+jobs:
+  ai-test-automation:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+      
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      
+      - name: Run Analysis
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          echo "Running system analysis..."
+          python src/ai_engine/analyzer.py
+          echo "Analysis complete"
+      
+      - name: Generate Tests with AI
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          echo "Generating tests with GPT-4o-mini..."
+          python src/ai_engine/test_generator.py
+          echo "Test generation complete"
+      
+      - name: Execute Generated Tests
+        continue-on-error: true
+        run: |
+          echo "Running generated tests..."
+          pytest || true
+          echo "Test execution complete"
+      
+      - name: Self-Healing Analysis
+        if: always()
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          echo "Running self-healing analysis..."
+          python src/ai_engine/self_healer.py
+          echo "Self-healing complete"
+      
+      - name: Generate AI Summary
+        if: always()
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          echo "Generating AI-powered summary..."
+          python src/ai_engine/report_summarizer.py
+          echo "Summary generation complete"
+      
+      - name: Upload Analysis Report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: analysis-report
+          path: reports/analysis.md
+          retention-days: 30
+      
+      - name: Upload Test Reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports
+          path: |
+            reports/html/report.html
+            reports/pytest-report.json
+            reports/healing_analysis.json
+          retention-days: 30
+      
+      - name: Upload AI Summary
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ai-summary
+          path: reports/summaries/summary_*.md
+          retention-days: 30
+      
+      - name: Upload Generated Tests
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: generated-tests
+          path: tests/generated/
+          retention-days: 30
+      
+      - name: Commit Improved Tests
+        if: always()
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git add tests/generated/ reports/summaries/ reports/analysis.md || true
+          git diff --staged --quiet || git commit -m "chore: update analysis, self-healed tests and add summary [skip ci]" || true
+          git push || true
+
