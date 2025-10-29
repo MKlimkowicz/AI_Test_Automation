@@ -241,15 +241,6 @@ The framework currently supports Python code analysis. It works best with:
 - `pytest-html==4.1.1` - HTML reporting
 - `pytest-json-report==1.5.0` - JSON reporting
 
-## Code Style
-
-This project follows these principles:
-- Minimal comments (code should be self-documenting)
-- Minimal docstrings (only for main entry points)
-- Type hints for clarity
-- Clean, readable code
-- Consistent naming conventions
-
 ## Contributing
 
 This is a portfolio project demonstrating AI-powered test automation capabilities.
