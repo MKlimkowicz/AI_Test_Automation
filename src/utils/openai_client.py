@@ -79,7 +79,8 @@ Requirements:
 - Use type hints for clarity
 - Follow pytest conventions
 - Make tests independent and reusable
-- Include necessary imports
+- Include necessary imports (import directly from module name, e.g., 'from sample_api import ...')
+- The app directory is in Python path, so import modules by their filename without the app prefix
 - Return ONLY the Python code, no explanations
 
 Generate the complete test file:"""
