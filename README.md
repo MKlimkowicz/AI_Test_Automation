@@ -38,22 +38,32 @@ An intelligent test automation framework that uses GPT-4o-mini to automatically 
 AI_Test_Automation/
 ├── .github/workflows/
 │   └── ai-test-automation.yml    # GitHub Actions workflow
-├── app/                          # Your Python application code (to be analyzed)
-│   ├── sample_api.py             # Sample application (replace with your code)
+├── app/                          # Your application code (to be analyzed)
+│   ├── sample_api.py             # Sample Flask API (for testing)
+│   ├── documentation/
+│   │   └── sample_api_docs.md    # Sample API documentation
 │   └── __init__.py
 ├── src/
 │   ├── ai_engine/
 │   │   ├── analyzer.py           # Scans app/ and generates analysis.md
 │   │   ├── test_generator.py     # Generates tests from analysis.md
 │   │   ├── self_healer.py        # Failure analysis and self-healing
+│   │   ├── commit_controller.py  # Commit condition checker
+│   │   ├── bug_reporter.py       # Generates BUGS.md
 │   │   └── report_summarizer.py  # AI report generation
 │   └── utils/
 │       └── openai_client.py      # OpenAI GPT-4o-mini client
-├── tests/generated/              # AI-generated tests
+├── tests/
+│   ├── generated/                # AI-generated tests
+│   └── conftest.py               # Shared pytest fixtures
+├── test_templates/
+│   └── test_best_practices.md    # Testing best practices guide
 ├── reports/
 │   ├── analysis.md               # AI-generated code analysis
+│   ├── BUGS.md                   # Detailed bug reports (when defects found)
 │   ├── html/                     # Pytest HTML reports
 │   └── summaries/                # AI-generated summaries
+├── run_full_workflow.sh          # Automated workflow script
 ├── requirements.txt
 ├── pytest.ini
 └── README.md
@@ -86,9 +96,90 @@ export OPENAI_API_KEY='your-api-key-here'
    - Name: `OPENAI_API_KEY`
    - Value: Your OpenAI API key
 
+## Sample Application
+
+The framework includes a **sample Flask API** for testing and demonstration:
+
+**Location**: `app/sample_api.py` + `app/documentation/sample_api_docs.md`
+
+**Features:**
+- User Management API (CRUD operations)
+- Authentication endpoint
+- Pagination support
+- Input validation
+- **Intentional bug** in login endpoint (for defect detection testing)
+
+**Running the Sample API:**
+```bash
+python app/sample_api.py
+# API runs on http://localhost:5000
+```
+
+**Testing the Sample API:**
+The `run_full_workflow.sh` script automatically starts/stops the API and runs the full test automation workflow.
+
+### Switching to Your Own Application
+
+To analyze your own application instead of the sample:
+
+**Option 1: Replace sample_api files**
+```bash
+# Remove sample files
+rm app/sample_api.py
+rm app/documentation/sample_api_docs.md
+
+# Add your application
+cp your_app.py app/
+cp your_docs.md app/documentation/
+```
+
+**Option 2: Remove analyzer filters (analyze all files)**
+
+The analyzer currently has **temporary filters** to only scan `sample_api` files. To analyze all files in `app/`:
+
+Edit `src/ai_engine/analyzer.py` and **remove lines 215-216 and 222-223**:
+```python
+# REMOVE THESE LINES:
+# Line 215-216:
+code_files = {k: v for k, v in code_files.items() if 'sample_api' in k}
+
+# Line 222-223:
+doc_files = {k: v for k, v in doc_files.items() if 'sample_api' in k}
+```
+
+After removing these filters, the analyzer will detect and analyze **all code and documentation** in the `app/` directory.
+
 ## Usage
 
+### Quick Start (Recommended)
+
+Run the complete workflow with a single command:
+
+```bash
+./run_full_workflow.sh
+```
+
+This automated script:
+- Checks prerequisites (Python, OpenAI API key)
+- Starts the sample Flask API server
+- Runs all 6 workflow steps automatically
+- Generates all reports (including BUGS.md)
+- Stops the API server on completion
+- Returns appropriate exit codes for CI/CD
+
+**Exit Codes:**
+- `0`: All tests passed or only actual defects remain (commit allowed)
+- `1`: Tests failed after max healing attempts (commit blocked)
+
 ### Running Locally
+
+**Option 1: Automated Workflow (Recommended)**
+```bash
+export OPENAI_API_KEY='your-api-key-here'
+./run_full_workflow.sh
+```
+
+**Option 2: Step-by-Step Execution**
 
 1. **Analyze Your Code**:
 ```bash
@@ -341,98 +432,39 @@ app/
 **Configuration Files** (auto-detected):
 - `package.json`, `Cargo.toml`, `requirements.txt`, `pom.xml`, `go.mod`, `Gemfile`, `composer.json`, etc.
 
-## Test Scenario Examples
+## Example: Sample Flask API
 
-The repository includes three complete examples demonstrating different use cases:
+The repository includes a complete working example in `app/sample_api.py`:
 
-### Example 1: Rust API with Documentation
-**Location**: `app/rust/` + `app/documentation/rust_api/`
+**Application Features:**
+- Flask REST API with 7 endpoints
+- User CRUD operations
+- Authentication endpoint (with intentional bug)
+- Pagination support
+- Input validation
 
-A complete Actix-web Book Library API with comprehensive documentation.
-
-**Code**: `app/rust/main.rs`, `app/rust/Cargo.toml`
-- Actix-web REST API with 7 endpoints
-- CRUD operations for books
-- ISBN uniqueness validation
-- Thread-safe Mutex-based storage
-- Search functionality
-
-**Documentation**: `app/documentation/rust_api/book_library_api.md`
+**Documentation:** `app/documentation/sample_api_docs.md`
 - Complete API specification
-- Business rules and validation
-- Testing requirements
-- Security considerations
-
-**To Test**:
-```bash
-cp app/rust/* app/
-mkdir -p app/documentation
-# Documentation already in place at app/documentation/rust_api/
-python src/ai_engine/analyzer.py
-```
-
-**Expected**: Analysis with Rust code + documentation, categorized test scenarios including functional, performance, and security tests.
-
----
-
-### Example 2: Python API Documentation Only (TDD)
-**Location**: `app/documentation/python_api/`
-
-A complete User Management API specification without any code - perfect for TDD workflow.
-
-**Documentation**: `app/documentation/python_api/api_specification.md`
-- 5 REST endpoints (Create, Read, Update, Delete, List)
-- Authentication requirements
+- Request/response examples
 - Validation rules
-- Rate limiting specs
-- Comprehensive test scenarios
+- Test scenarios
 
-**To Test**:
+**To Test:**
 ```bash
-# Remove any code files
-rm -rf app/*.py app/*.js app/*.rs app/Cargo.toml app/package.json
-# Documentation already in place
-python src/ai_engine/analyzer.py
+./run_full_workflow.sh
 ```
 
-**Expected**: Analysis based purely on documentation, functional and security test scenarios generated before any code exists.
+**Expected Results:**
+- 15+ tests generated
+- 1-2 tests self-healed automatically
+- 1 actual defect detected (intentional login bug)
+- BUGS.md generated with detailed analysis
+- Commit blocked until defect is fixed
 
----
-
-### Example 3: JavaScript Express API (Code Only)
-**Location**: `app/javascript/`
-
-A working Express.js Product API without documentation.
-
-**Code**: `app/javascript/server.js`, `app/javascript/package.json`
-- Express.js REST API with 5 endpoints
-- Product CRUD operations
-- In-memory data store
-- Query filtering (price, stock)
-- Input validation and error handling
-
-**To Test**:
-```bash
-rm -rf app/documentation
-cp app/javascript/* app/
-python src/ai_engine/analyzer.py
-```
-
-**Expected**: Analysis detects JavaScript/Express, extracts dependencies from package.json, generates functional test scenarios.
-
----
-
-### Testing All Examples
-
-See the complete testing guide in each example's documentation or run:
-
-```bash
-# Test each scenario sequentially
-python src/ai_engine/analyzer.py  # Analyzes current app/ content
-cat reports/analysis.md            # Review generated analysis
-python src/ai_engine/test_generator.py  # Generate tests
-pytest                             # Run generated tests
-```
+**Viewing Results:**
+- HTML Report: `reports/html/report.html`
+- Bug Report: `reports/BUGS.md`
+- Summary: `reports/summaries/summary_*.md`
 
 ## Future Enhancements
 
@@ -459,10 +491,9 @@ pytest                             # Run generated tests
 
 ## Key Features Documentation
 
-- **[ITERATIVE_HEALING.md](ITERATIVE_HEALING.md)** - Complete guide to iterative self-healing feature
+- **[ITERATIVE_HEALING.md](ITERATIVE_HEALING.md)** - Complete guide to iterative self-healing
 - **[WORKFLOW.md](WORKFLOW.md)** - Detailed workflow documentation
-- **[CATEGORIZED_TEST_SCENARIOS.md](CATEGORIZED_TEST_SCENARIOS.md)** - Test categorization guide (if exists)
-- **[CONFIGURATION_FILES_SUPPORT.md](CONFIGURATION_FILES_SUPPORT.md)** - Config file detection (if exists)
+- **[test_templates/test_best_practices.md](test_templates/test_best_practices.md)** - Testing best practices and patterns
 
 ## Contributing
 

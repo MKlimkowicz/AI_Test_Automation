@@ -12,6 +12,38 @@ This framework implements an intelligent, AI-powered test automation pipeline th
 7. Self-heals failing tests
 8. Generates AI-powered summaries
 
+## Automated Workflow Script
+
+The `run_full_workflow.sh` script automates the entire pipeline:
+
+**Usage:**
+```bash
+./run_full_workflow.sh
+```
+
+**What It Does:**
+1. **Checks Prerequisites** - Python 3, OpenAI API key, dependencies
+2. **Starts Sample API** - Launches Flask app on port 5000
+3. **Step 1: Analyze Code** - Scans app/ and app/documentation/
+4. **Step 2: Generate Tests** - Creates pytest files from analysis
+5. **Step 3: Execute Tests** - Runs all tests with HTML/JSON reports
+6. **Step 4: Iterative Self-Healing** - Heals and reruns failing tests (max 3 attempts)
+7. **Step 5: Check Commit Conditions** - Determines if commit should be allowed
+8. **Step 6: Generate Reports** - Creates summary and BUGS.md (always runs, even if commit blocked)
+9. **Cleanup** - Stops API server
+
+**Exit Behavior:**
+- Always generates reports (Step 6), even when commit is blocked
+- Returns exit code 1 if commit blocked (for CI/CD)
+- Returns exit code 0 if commit allowed
+
+**Benefits:**
+- One-command execution
+- Automatic API lifecycle management
+- Color-coded progress output
+- Comprehensive error handling
+- CI/CD compatible exit codes
+
 ## Complete Workflow
 
 ```
@@ -207,9 +239,14 @@ The workflow runs all steps automatically with iterative healing:
 ```
 Input:
   app/                        (Your application)
+    ├── sample_api.py         (Sample Flask API)
     ├── *.py, *.js, *.rs, etc (Source code - 15+ languages)
     ├── package.json, Cargo.toml, etc (Config files)
     └── documentation/        (Markdown, text docs)
+        └── sample_api_docs.md
+
+Automation:
+  run_full_workflow.sh        (One-command automation)
 
 Processing:
   reports/analysis.md         (AI-generated analysis with categorized scenarios)
@@ -219,26 +256,34 @@ Processing:
 
 Output:
   reports/html/report.html    (Test execution report)
-  reports/summaries/summary_*.md (AI summary)
+  reports/BUGS.md             (Detailed bug analysis - when defects found)
+  reports/summaries/summary_*.md (AI summary - always generated)
   tests/generated/*.py        (Healed tests)
 ```
 
 ## Usage Example
 
-### Local Development
+### Automated Workflow (Recommended)
 ```bash
 cd /Users/maciejklimkowicz/Documents/Projects/AI_Test_Automation
+export OPENAI_API_KEY='your-key'
+./run_full_workflow.sh
+```
 
+### Manual Step-by-Step Execution
+```bash
+cd /Users/maciejklimkowicz/Documents/Projects/AI_Test_Automation
 export OPENAI_API_KEY='your-key'
 
+# Start your application (if needed)
+python app/sample_api.py &
+
+# Run workflow steps
 python src/ai_engine/analyzer.py
-
 python src/ai_engine/test_generator.py
-
 pytest
-
 python src/ai_engine/self_healer.py
-
+python src/ai_engine/commit_controller.py
 python src/ai_engine/report_summarizer.py
 ```
 
@@ -340,104 +385,68 @@ Only test errors are automatically fixed. Actual defects are documented for manu
 10. **Comprehensive Documentation**: Markdown reports at every stage
 11. **Portfolio Ready**: Demonstrates AI, testing, and automation skills
 
-## Test Scenario Examples
+## Example: Sample Flask API
 
-The repository includes three complete examples:
+The repository includes a complete working example in `app/sample_api.py`:
 
-### Example 1: Rust API with Documentation
-**Files**: `app/rust/` + `app/documentation/rust_api/`
+**Application Features:**
+- Flask REST API with 7 endpoints
+- User CRUD operations
+- Authentication endpoint (with intentional bug)
+- Pagination support
+- Input validation
 
-Demonstrates combined code and documentation analysis.
+**Documentation:** `app/documentation/sample_api_docs.md`
+- Complete API specification
+- Request/response examples
+- Validation rules
+- Test scenarios
 
-**What's Included**:
-- Actix-web Book Library API (250 lines of Rust code)
-- Complete API documentation with business rules
-- Configuration file (`Cargo.toml`)
-
-**Test It**:
+**To Test:**
 ```bash
-cp app/rust/* app/
-# Documentation already at app/documentation/rust_api/
-python src/ai_engine/analyzer.py
+./run_full_workflow.sh
 ```
 
-**Expected Output**:
-- Detects Rust language
-- Reads `Cargo.toml` for dependencies
-- Combines code + documentation
-- Generates Functional, Performance, and Security test scenarios
+**Expected Results:**
+- 15+ tests generated
+- 1-2 tests self-healed automatically
+- 1 actual defect detected (intentional login bug)
+- BUGS.md generated with detailed analysis
+- Commit blocked until defect is fixed
 
----
+**Viewing Results:**
+- HTML Report: `reports/html/report.html`
+- Bug Report: `reports/BUGS.md`
+- Summary: `reports/summaries/summary_*.md`
 
-### Example 2: Python API Documentation Only
-**Files**: `app/documentation/python_api/`
+## Analyzer Configuration
 
-Demonstrates pure TDD workflow - tests from documentation alone.
+### Temporary Filters
 
-**What's Included**:
-- Complete User Management API specification
-- Authentication requirements
-- Validation rules and error responses
-- Rate limiting specifications
+The analyzer (`src/ai_engine/analyzer.py`) currently includes **temporary filters** at lines 215-216 and 222-223:
 
-**Test It**:
-```bash
-rm -rf app/*.py app/*.js app/*.rs app/Cargo.toml app/package.json
-# Documentation already at app/documentation/python_api/
-python src/ai_engine/analyzer.py
+```python
+# Lines 215-216
+code_files = {k: v for k, v in code_files.items() if 'sample_api' in k}
+
+# Lines 222-223
+doc_files = {k: v for k, v in doc_files.items() if 'sample_api' in k}
 ```
 
-**Expected Output**:
-- No code files detected
-- Analysis based purely on documentation
-- Generates Functional and Security test scenarios
-- Ready for TDD workflow
+**Purpose:** These filters ensure only the sample API is analyzed during testing/demonstration.
 
----
+**To Analyze All Files:**
+1. Open `src/ai_engine/analyzer.py`
+2. Delete or comment out lines 215-216 and 222-223
+3. Save the file
+4. Run analyzer: `python src/ai_engine/analyzer.py`
 
-### Example 3: JavaScript Express API
-**Files**: `app/javascript/`
+The analyzer will now scan **all code and documentation** in `app/` and `app/documentation/`.
 
-Demonstrates code-only analysis without documentation.
+### Supported File Types
 
-**What's Included**:
-- Express.js Product API (190 lines)
-- `package.json` with dependencies
-- 5 REST endpoints with validation
-
-**Test It**:
-```bash
-rm -rf app/documentation
-cp app/javascript/* app/
-python src/ai_engine/analyzer.py
-```
-
-**Expected Output**:
-- Detects JavaScript language
-- Reads `package.json` for dependencies (Express.js)
-- Generates Functional test scenarios
-- Framework-aware test generation
-
----
-
-### Running Generated Tests
-
-After analyzing any example:
-
-```bash
-# Generate tests from analysis
-python src/ai_engine/test_generator.py
-
-# Review generated tests
-ls tests/generated/
-
-# Run tests
-pytest
-
-# Self-heal any failures
-python src/ai_engine/self_healer.py
-
-# Generate summary
-python src/ai_engine/report_summarizer.py
-```
+The analyzer automatically detects and reads:
+- **Code**: `.py`, `.js`, `.ts`, `.rs`, `.go`, `.java`, `.rb`, `.php`, `.cs`, `.cpp`, `.swift`, `.kt`, `.scala`, `.r`, `.sh`, `.sql`
+- **Config**: `package.json`, `Cargo.toml`, `requirements.txt`, `pom.xml`, `go.mod`, etc.
+- **Docs**: `.md`, `.txt`, `.rst`, `.adoc`
 
