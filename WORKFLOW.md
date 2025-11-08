@@ -134,43 +134,72 @@ This framework implements an intelligent, AI-powered test automation pipeline th
 - Generates HTML report (`reports/html/report.html`)
 - Generates JSON report (`reports/pytest-report.json`)
 
-### 4. Self-Healer (`src/ai_engine/self_healer.py`)
+### 4. Iterative Self-Healer (`src/ai_engine/self_healer.py`)
+Performs iterative healing with automatic reruns:
+
+**Process**:
 - Parses JSON test results
-- For each failure:
-  - Sends to GPT-4o-mini for classification
-  - **Test Error**: Regenerates fixed test
-  - **Actual Defect**: Flags for manual review
-- Saves healing analysis JSON
+- For each failure, classifies as TEST_ERROR or ACTUAL_DEFECT
+- **For TEST_ERROR** (max 3 attempts):
+  1. Heal the test code
+  2. Rerun only that test
+  3. If passes: Mark as successfully healed
+  4. If fails: Re-classify and repeat
+  5. If becomes ACTUAL_DEFECT: Stop healing
+- **For ACTUAL_DEFECT**: Don't heal, flag for investigation
+- Determines if commit should be allowed
 
 **Output**: 
-- Fixed test files
-- `reports/healing_analysis.json`
+- Fixed test files (healed and passing)
+- `reports/healing_analysis.json` with:
+  - successfully_healed (tests that now pass)
+  - actual_defects (bugs requiring investigation)
+  - max_attempts_exceeded (tests still failing)
+  - commit_allowed (true/false)
 
-### 5. Report Summarizer (`src/ai_engine/report_summarizer.py`)
+### 5. Report Summarizer & Bug Reporter
+**Report Summarizer** (`src/ai_engine/report_summarizer.py`):
 - Reads test results + healing analysis
 - Generates comprehensive markdown summary via GPT-4o-mini
+- Integrates bug report generation
 - Filename: `summary_YYYY-MM-DD_HH-MM-SS.md`
 
-**Output**: Markdown summary with:
-- Executive summary
-- Pass/fail breakdown
-- Test errors vs actual defects
-- Healing actions taken
-- Recommendations
+**Bug Reporter** (`src/ai_engine/bug_reporter.py`):
+- Generates detailed `BUGS.md` for ACTUAL_DEFECT findings
+- AI analyzes each bug with root cause, severity, fixes
+- Only created when defects exist
+
+**Output**: 
+- `reports/summaries/summary_*.md` with:
+  - Executive summary
+  - Iterative healing details
+  - Successfully healed tests (with attempt counts)
+  - Tests that exceeded max attempts
+  - Actual defects summary
+  - Commit status
+  - Recommendations
+- `reports/BUGS.md` (if defects found) with:
+  - Detailed bug analysis
+  - Root cause and severity
+  - Reproduction steps
+  - Investigation guidance
 
 ## GitHub Actions Integration
 
-The workflow runs all 5 steps automatically:
+The workflow runs all steps automatically with iterative healing:
 
 ```yaml
 1. Checkout & Setup
 2. Analyze Code → reports/analysis.md
 3. Generate Tests → tests/generated/
-4. Execute Tests → reports/html/, reports/*.json
-5. Self-Heal → Updated tests + healing_analysis.json
-6. Generate Summary → reports/summaries/summary_*.md
-7. Upload Artifacts
-8. Commit Changes
+4. Execute Tests (Initial) → reports/html/, reports/*.json
+5. Iterative Self-Heal → Heal, rerun, re-classify (max 3 attempts/test)
+6. Check Commit Conditions → Allow or block based on healing results
+7. Generate Summary & BUGS.md → reports/summaries/, reports/BUGS.md
+8. Upload Artifacts (all reports)
+9. Commit Changes (only if allowed)
+   - Commits healed tests if all TEST_ERROR tests passed
+   - Blocks commit if any tests exceeded max attempts
 ```
 
 ## File Flow
@@ -304,10 +333,12 @@ Only test errors are automatically fixed. Actual defects are documented for manu
 3. **Intelligent Test Categorization**: Functional, Performance, Security
 4. **Documentation-Driven Testing**: Generate tests before writing code
 5. **Configuration Awareness**: Understands dependencies and frameworks
-6. **Continuous Improvement**: Self-healing fixes flaky tests
-7. **Smart Failure Analysis**: Distinguishes bugs from test issues
-8. **Comprehensive Documentation**: Markdown reports at every stage
-9. **Portfolio Ready**: Demonstrates AI, testing, and automation skills
+6. **Iterative Self-Healing**: Continuously heals tests until they pass (max 3 attempts)
+7. **Smart Failure Analysis**: Distinguishes bugs from test issues with re-classification
+8. **Conditional Commits**: Only commits when tests are truly fixed
+9. **Detailed Bug Reports**: AI-generated BUGS.md with investigation guidance
+10. **Comprehensive Documentation**: Markdown reports at every stage
+11. **Portfolio Ready**: Demonstrates AI, testing, and automation skills
 
 ## Test Scenario Examples
 

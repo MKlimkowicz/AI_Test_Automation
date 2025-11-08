@@ -250,6 +250,49 @@ Generate the fixed test code:"""
         
         return response.choices[0].message.content.strip()
 
+    def analyze_bug(self, defect_info: dict) -> str:
+        """
+        Generate detailed bug analysis for an ACTUAL_DEFECT.
+        
+        Args:
+            defect_info: Dictionary containing defect information
+        
+        Returns:
+            Detailed bug analysis as markdown
+        """
+        prompt = f"""Analyze this potential application bug and provide detailed investigation guidance:
+
+Bug Information:
+- Test Name: {defect_info.get('test_name', 'Unknown')}
+- Classification: {defect_info.get('classification', 'ACTUAL_DEFECT')}
+- Confidence: {defect_info.get('confidence', 'unknown')}
+- Error Message: {defect_info.get('error', 'N/A')}
+- AI Analysis: {defect_info.get('analysis', 'N/A')}
+
+Provide a detailed bug report with:
+1. **Root Cause Analysis**: What is likely causing this failure?
+2. **Affected Components**: Which parts of the application are involved?
+3. **Severity Assessment**: Critical/High/Medium/Low and why
+4. **Reproduction Steps**: How to reproduce this bug
+5. **Suggested Investigation Areas**: Where developers should look
+6. **Potential Fixes**: Possible solutions or approaches
+7. **Related Code**: Which files/functions to examine
+
+Format as clear, actionable markdown.
+"""
+
+        response = self.client.chat.completions.create(
+            model=self.model,
+            messages=[
+                {"role": "system", "content": "You are an expert software debugger and QA engineer. Analyze bugs thoroughly and provide actionable investigation guidance."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.3,
+            max_tokens=1500
+        )
+        
+        return response.choices[0].message.content.strip()
+
     def summarize_report(self, report_data: dict, healing_analysis: dict) -> str:
         prompt = f"""Generate a comprehensive test execution summary:
 
@@ -262,11 +305,16 @@ Self-Healing Analysis:
 Create a detailed markdown report with:
 1. Executive Summary (pass rate, total tests, duration)
 2. Test Results Overview
-3. Failure Analysis:
-   - Test Errors (Self-Healed) - with before/after comparison
-   - Actual Defects (Requiring Investigation) - with details
-4. Self-Healing Actions Taken
-5. Recommendations
+3. Iterative Healing Process:
+   - Successfully Healed Tests (with number of attempts)
+   - Tests that exceeded max healing attempts
+4. Failure Analysis:
+   - Test Errors (Self-Healed) - with healing iterations
+   - Actual Defects (Requiring Investigation) - with detailed analysis
+5. Self-Healing Actions Taken
+6. Bug Report Summary (if actual defects found)
+7. Commit Status (allowed or blocked)
+8. Recommendations
 
 Format as markdown with clear sections and bullet points.
 """
@@ -274,7 +322,7 @@ Format as markdown with clear sections and bullet points.
         response = self.client.chat.completions.create(
             model=self.model,
             messages=[
-                {"role": "system", "content": "You are an expert QA reporting specialist. Create clear, actionable test reports."},
+                {"role": "system", "content": "You are an expert QA reporting specialist. Create clear, actionable test reports with emphasis on iterative healing results and bug identification."},
                 {"role": "user", "content": prompt}
             ],
             temperature=0.4,

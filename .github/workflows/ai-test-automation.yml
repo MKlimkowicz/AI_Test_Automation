@@ -1,66 +1,85 @@
-name: AI Test Automation
+name: AI Test Automation with Iterative Healing
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - 'app/**'
+      - 'src/**'
+      - 'tests/**'
 
 jobs:
-  ai-test-automation:
+  test-and-heal:
     runs-on: ubuntu-latest
     
     steps:
-      - name: Checkout Repository
+      - name: Checkout code
         uses: actions/checkout@v4
       
-      - name: Setup Python
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: '3.12'
+          cache: 'pip'
       
-      - name: Install Dependencies
+      - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
       
-      - name: Run Analysis
+      - name: Analyze Code
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
-          echo "Running system analysis..."
+          echo "=== Step 1: Code Analysis ==="
           python src/ai_engine/analyzer.py
-          echo "Analysis complete"
       
-      - name: Generate Tests with AI
+      - name: Generate Tests
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
-          echo "Generating tests with GPT-4o-mini..."
+          echo "=== Step 2: Test Generation ==="
           python src/ai_engine/test_generator.py
-          echo "Test generation complete"
       
-      - name: Execute Generated Tests
+      - name: Run Tests (Initial)
         continue-on-error: true
         run: |
-          echo "Running generated tests..."
+          echo "=== Step 3: Initial Test Execution ==="
           pytest || true
-          echo "Test execution complete"
       
-      - name: Self-Healing Analysis
-        if: always()
+      - name: Iterative Self-Healing
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
-          echo "Running self-healing analysis..."
+          echo "=== Step 4: Iterative Self-Healing ==="
           python src/ai_engine/self_healer.py
-          echo "Self-healing complete"
       
-      - name: Generate AI Summary
-        if: always()
+      - name: Check Commit Conditions
+        id: commit_check
+        run: |
+          echo "=== Step 5: Checking Commit Conditions ==="
+          python src/ai_engine/commit_controller.py
+          echo "commit_allowed=$?" >> $GITHUB_OUTPUT
+      
+      - name: Generate Summary Report
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
-          echo "Generating AI-powered summary..."
+          echo "=== Step 6: Generating Summary Report ==="
           python src/ai_engine/report_summarizer.py
-          echo "Summary generation complete"
+      
+      - name: Upload Test Reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports
+          path: |
+            reports/html/
+            reports/pytest-report.json
+            reports/healing_analysis.json
+          retention-days: 30
       
       - name: Upload Analysis Report
         if: always()
@@ -70,24 +89,22 @@ jobs:
           path: reports/analysis.md
           retention-days: 30
       
-      - name: Upload Test Reports
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: test-reports
-          path: |
-            reports/html/report.html
-            reports/pytest-report.json
-            reports/healing_analysis.json
-          retention-days: 30
-      
       - name: Upload AI Summary
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: ai-summary
-          path: reports/summaries/summary_*.md
+          path: reports/summaries/
           retention-days: 30
+      
+      - name: Upload Bug Report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bug-report
+          path: reports/BUGS.md
+          retention-days: 30
+          if-no-files-found: ignore
       
       - name: Upload Generated Tests
         if: always()
@@ -97,12 +114,56 @@ jobs:
           path: tests/generated/
           retention-days: 30
       
-      - name: Commit Improved Tests
-        if: always()
+      - name: Commit Healed Tests
+        if: steps.commit_check.outputs.commit_allowed == '0'
         run: |
+          echo "=== Step 7: Committing Healed Tests ==="
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
-          git add tests/generated/ reports/summaries/ reports/analysis.md || true
-          git diff --staged --quiet || git commit -m "chore: update analysis, self-healed tests and add summary [skip ci]" || true
-          git push || true
-
+          git add tests/generated/
+          git add reports/
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "chore: auto-heal tests and update reports [skip ci]"
+            git push
+          fi
+      
+      - name: Comment on Blocked Commit
+        if: steps.commit_check.outputs.commit_allowed != '0'
+        run: |
+          echo "⚠️ COMMIT BLOCKED"
+          echo "Some tests could not be healed after maximum attempts."
+          echo "Review the healing analysis and fix tests manually."
+          exit 1
+      
+      - name: Job Summary
+        if: always()
+        run: |
+          echo "## AI Test Automation Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          if [ -f reports/healing_analysis.json ]; then
+            HEALED=$(jq -r '.healed_count' reports/healing_analysis.json)
+            DEFECTS=$(jq -r '.defect_count' reports/healing_analysis.json)
+            EXCEEDED=$(jq -r '.exceeded_count' reports/healing_analysis.json)
+            COMMIT_ALLOWED=$(jq -r '.commit_allowed' reports/healing_analysis.json)
+            
+            echo "### Healing Results" >> $GITHUB_STEP_SUMMARY
+            echo "- ✅ Successfully Healed: $HEALED" >> $GITHUB_STEP_SUMMARY
+            echo "- ⚠️ Actual Defects: $DEFECTS" >> $GITHUB_STEP_SUMMARY
+            echo "- ❌ Max Attempts Exceeded: $EXCEEDED" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            
+            if [ "$COMMIT_ALLOWED" = "true" ]; then
+              echo "### ✅ Commit Status: ALLOWED" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "### ❌ Commit Status: BLOCKED" >> $GITHUB_STEP_SUMMARY
+            fi
+            
+            if [ "$DEFECTS" -gt 0 ]; then
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "### 🐛 Bug Report Available" >> $GITHUB_STEP_SUMMARY
+              echo "Check the bug-report artifact for detailed analysis" >> $GITHUB_STEP_SUMMARY
+            fi
+          fi

@@ -23,9 +23,11 @@ An intelligent test automation framework that uses GPT-4o-mini to automatically 
   - Only suggests categories relevant to your application
 - **AI-Powered Analysis Reports**: Generates comprehensive markdown analysis of your codebase
 - **AI-Powered Test Generation**: Automatically generates pytest tests based on code analysis
-- **Intelligent Self-Healing**: Distinguishes between test errors and actual defects
-  - Test errors are automatically fixed and regenerated
-  - Actual defects are flagged for investigation
+- **Iterative Self-Healing**: Continuously heals tests until they pass or are classified as bugs
+  - Test errors are automatically fixed and rerun (max 3 attempts per test)
+  - Re-classification after each failed rerun
+  - Only commits when all test errors are successfully healed
+  - Actual defects are flagged for investigation with detailed bug reports
 - **Automated Execution**: Runs generated tests with comprehensive reporting
 - **AI-Generated Summaries**: Creates detailed markdown reports with failure analysis
 - **GitHub Actions Integration**: Fully automated workflow with manual dispatch trigger
@@ -105,12 +107,17 @@ This reads `analysis.md` and generates pytest tests
 pytest
 ```
 
-4. **Self-Heal Failed Tests**:
+4. **Iterative Self-Healing** (automatically heals and reruns tests):
 ```bash
 python src/ai_engine/self_healer.py
 ```
 
-5. **Generate Summary**:
+5. **Check Commit Conditions**:
+```bash
+python src/ai_engine/commit_controller.py
+```
+
+6. **Generate Summary & Bug Reports**:
 ```bash
 python src/ai_engine/report_summarizer.py
 ```
@@ -186,34 +193,54 @@ Generated tests are executed with:
 - JSON reporting (`pytest-json-report`)
 - Detailed failure information
 
-### 4. Self-Healing
-For each test failure, AI classifies it as:
+### 4. Iterative Self-Healing
+For each test failure, AI classifies it and enters an iterative healing loop:
 
-**Test Error** (Self-Healed):
+**Healing Process** (for TEST_ERROR):
+1. Classify failure as TEST_ERROR or ACTUAL_DEFECT
+2. If TEST_ERROR: Heal the test
+3. Rerun the healed test
+4. If passes: Mark as successfully healed
+5. If fails: Re-classify and repeat (max 3 attempts)
+6. If becomes ACTUAL_DEFECT: Stop healing, flag for investigation
+
+**Test Error** (Auto-Healed):
 - Wrong assertions
 - Timing issues
 - Bad selectors
 - Flaky tests
 - Incorrect setup/teardown
 
-**Actual Defect** (Flagged for Investigation):
+**Actual Defect** (Flagged + Detailed Bug Report):
 - Application bugs
 - API failures
 - Database issues
 - Business logic errors
 
-Only test errors are automatically fixed and regenerated.
+**Commit Control**:
+- Commits only when all TEST_ERROR tests are successfully healed
+- Blocks commit if tests exceed max healing attempts
+- ACTUAL_DEFECT tests don't block commits (require manual investigation)
 
-### 5. AI Summary
-A comprehensive markdown report is generated with:
+### 5. AI Summary & Bug Reports
+Comprehensive reports are generated:
+
+**Summary Report** (`reports/summaries/summary_YYYY-MM-DD_HH-MM-SS.md`):
 - Executive summary (pass rates, duration)
+- Iterative healing process details
+- Successfully healed tests (with attempt counts)
+- Tests that exceeded max attempts
 - Categorized failures (test errors vs defects)
-- Self-healing actions taken
-- Before/after comparison for healed tests
-- Actual defects requiring investigation
+- Commit status (allowed or blocked)
 - Recommendations
 
-Summary filename format: `summary_YYYY-MM-DD_HH-MM-SS.md`
+**Bug Report** (`reports/BUGS.md`) - Generated when defects found:
+- Root cause analysis for each bug
+- Severity assessment
+- Reproduction steps
+- Suggested investigation areas
+- Potential fixes
+- Related code files
 
 ## Report Structure
 
@@ -429,6 +456,13 @@ pytest                             # Run generated tests
 - `pytest==8.3.3` - Test framework
 - `pytest-html==4.1.1` - HTML reporting
 - `pytest-json-report==1.5.0` - JSON reporting
+
+## Key Features Documentation
+
+- **[ITERATIVE_HEALING.md](ITERATIVE_HEALING.md)** - Complete guide to iterative self-healing feature
+- **[WORKFLOW.md](WORKFLOW.md)** - Detailed workflow documentation
+- **[CATEGORIZED_TEST_SCENARIOS.md](CATEGORIZED_TEST_SCENARIOS.md)** - Test categorization guide (if exists)
+- **[CONFIGURATION_FILES_SUPPORT.md](CONFIGURATION_FILES_SUPPORT.md)** - Config file detection (if exists)
 
 ## Contributing
 

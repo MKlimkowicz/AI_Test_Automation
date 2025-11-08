@@ -7,6 +7,7 @@ from typing import Dict
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from utils.openai_client import OpenAIClient
+from ai_engine.bug_reporter import generate_bugs_report
 
 def summarize_report(html_report_path: str, healing_analysis_path: str) -> str:
     client = OpenAIClient()
@@ -50,6 +51,23 @@ def summarize_report(html_report_path: str, healing_analysis_path: str) -> str:
         markdown_summary = markdown_summary[:-3]
     markdown_summary = markdown_summary.strip()
     
+    # Generate BUGS.md if there are actual defects
+    actual_defects = healing_data.get("actual_defects", [])
+    if actual_defects:
+        print(f"\nGenerating detailed bug report for {len(actual_defects)} defect(s)...")
+        bugs_file = generate_bugs_report(healing_analysis_path)
+        if bugs_file:
+            # Add reference to BUGS.md in summary
+            markdown_summary += f"\n\n---\n\n## Bug Report\n\n"
+            markdown_summary += f"**{len(actual_defects)} potential bug(s) identified.**\n\n"
+            markdown_summary += f"Detailed bug analysis available in: [`reports/BUGS.md`](../BUGS.md)\n\n"
+            markdown_summary += f"Each bug includes:\n"
+            markdown_summary += f"- Root cause analysis\n"
+            markdown_summary += f"- Severity assessment\n"
+            markdown_summary += f"- Reproduction steps\n"
+            markdown_summary += f"- Suggested investigation areas\n"
+            markdown_summary += f"- Potential fixes\n"
+    
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     summary_filename = f"summary_{timestamp}.md"
     summary_path = project_root / "reports" / "summaries" / summary_filename
@@ -58,7 +76,7 @@ def summarize_report(html_report_path: str, healing_analysis_path: str) -> str:
     with open(summary_path, "w") as f:
         f.write(markdown_summary)
     
-    print(f"Summary saved to: {summary_path}")
+    print(f"✓ Summary saved to: {summary_path}")
     
     return str(summary_path)
 
