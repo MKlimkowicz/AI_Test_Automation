@@ -1,5 +1,5 @@
 import os
-from typing import Optional, Dict
+from typing import Optional, Dict, List, Tuple
 from openai import OpenAI
 
 class OpenAIClient:
@@ -10,27 +10,72 @@ class OpenAIClient:
         self.client = OpenAI(api_key=self.api_key)
         self.model = "gpt-4o-mini"
 
-    def analyze_code(self, code_files: Dict[str, str]) -> str:
-        files_content = "\n\n".join([
-            f"### File: {filepath}\n```python\n{content}\n```"
-            for filepath, content in code_files.items()
-        ])
+    def analyze_code_and_docs(self, code_files: Dict[str, Tuple[str, str]], doc_files: Dict[str, str], languages: List[str]) -> str:
+        code_section = ""
+        if code_files:
+            code_parts = []
+            config_parts = []
+            for filepath, (content, language) in code_files.items():
+                if language == 'config':
+                    # Determine fence type based on file extension
+                    if filepath.endswith('.json'):
+                        fence = 'json'
+                    elif filepath.endswith('.toml'):
+                        fence = 'toml'
+                    elif filepath.endswith('.xml'):
+                        fence = 'xml'
+                    elif filepath.endswith('.yaml') or filepath.endswith('.yml'):
+                        fence = 'yaml'
+                    else:
+                        fence = 'text'
+                    config_parts.append(f"### Configuration: {filepath}\n```{fence}\n{content}\n```")
+                else:
+                    code_parts.append(f"### File: {filepath}\n```{language}\n{content}\n```")
+            
+            if code_parts:
+                code_section = "## Application Code\n\n" + "\n\n".join(code_parts)
+            if config_parts:
+                config_section = "## Configuration Files\n\n" + "\n\n".join(config_parts)
+                code_section = code_section + "\n\n" + config_section if code_section else config_section
         
-        prompt = f"""Analyze the following Python codebase and generate a comprehensive markdown report.
+        doc_section = ""
+        if doc_files:
+            doc_parts = []
+            for filepath, content in doc_files.items():
+                doc_parts.append(f"### Documentation: {filepath}\n```\n{content}\n```")
+            doc_section = "## Documentation\n\n" + "\n\n".join(doc_parts)
+        
+        languages_str = ", ".join(languages) if languages else "None detected"
+        
+        content_sections = []
+        if code_section:
+            content_sections.append(code_section)
+        if doc_section:
+            content_sections.append(doc_section)
+        
+        full_content = "\n\n".join(content_sections)
+        
+        prompt = f"""Analyze the following application and generate a comprehensive markdown report for test planning.
 
-{files_content}
+Languages Detected: {languages_str}
+
+{full_content}
 
 Generate a detailed analysis in markdown format with these sections:
 
 # Code Analysis Report
 
 ## Project Overview
-- Total Files: [count]
-- Framework Detected: [Flask/Django/FastAPI/None/Other]
+- Total Code Files: [count]
+- Total Configuration Files: [count]
+- Total Documentation Files: [count]
+- Languages Detected: [list languages]
+- Framework Detected: [Flask/Django/FastAPI/Express/Spring/None/Other]
+- Key Dependencies: [list main dependencies from config files if available]
 - Analysis Date: [current date]
 
 ## Project Structure
-List each file with brief description of its purpose
+List each file (code, configuration, and documentation) with brief description of its purpose
 
 ## Components Discovered
 
@@ -46,15 +91,47 @@ List important functions with their purpose
 ### Key Classes
 List important classes with their purpose
 
+## Documentation Summary
+Summarize key points from documentation files (if any)
+
 ## Recommended Test Scenarios
-Provide numbered list of specific test scenarios based on the code
+
+Analyze the application and suggest test scenarios in the following categories. Only include categories where testing is relevant and necessary - not all categories are required for every application.
+
+### Functional Tests
+List specific functional test scenarios that verify business logic, API endpoints, data validation, CRUD operations, user workflows, and feature correctness. Include scenarios for:
+- Happy path testing
+- Edge cases
+- Error handling
+- Input validation
+- Business rule enforcement
+
+### Performance Tests
+Only include if the application has performance-critical features, scalability requirements, or handles significant load. Suggest scenarios for:
+- Response time testing
+- Load testing
+- Stress testing
+- Concurrency testing
+- Resource usage monitoring
+- Database query performance
+
+### Security Tests
+Only include if the application has authentication, authorization, data handling, or external integrations. Suggest scenarios for:
+- Authentication and authorization
+- Input sanitization and injection prevention
+- Data encryption and privacy
+- Rate limiting
+- Token/session management
+- Access control validation
+
+Note: If a category is not applicable to this application, omit it entirely. Focus on what actually needs testing based on the code, dependencies, and documentation provided.
 
 Return ONLY the markdown, no additional explanations."""
 
         response = self.client.chat.completions.create(
             model=self.model,
             messages=[
-                {"role": "system", "content": "You are an expert code analyst and QA architect. Analyze codebases thoroughly and generate comprehensive test strategies."},
+                {"role": "system", "content": "You are an expert code analyst and QA architect. Analyze codebases and documentation thoroughly to generate comprehensive test strategies. You can create test plans from documentation alone or combined with code."},
                 {"role": "user", "content": prompt}
             ],
             temperature=0.4,
@@ -62,6 +139,10 @@ Return ONLY the markdown, no additional explanations."""
         )
         
         return response.choices[0].message.content.strip()
+
+    def analyze_code(self, code_files: Dict[str, str]) -> str:
+        converted_files = {path: (content, 'python') for path, content in code_files.items()}
+        return self.analyze_code_and_docs(converted_files, {}, ['python'])
 
     def generate_tests(self, analysis_markdown: str, scenario: str) -> str:
         prompt = f"""Generate pytest tests for the following test scenario based on code analysis.

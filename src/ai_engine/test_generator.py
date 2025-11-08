@@ -18,17 +18,44 @@ def extract_test_scenarios(analysis_md: str) -> List[str]:
     
     if scenario_section:
         scenario_text = scenario_section.group(1)
-        lines = scenario_text.strip().split('\n')
+
+        categories = ['Functional Tests', 'Performance Tests', 'Security Tests']
+        found_categories = False
         
-        for line in lines:
-            line = line.strip()
-            if re.match(r'^\d+[\.\)]\s+', line):
-                scenario = re.sub(r'^\d+[\.\)]\s+', '', line)
-                scenarios.append(scenario)
-            elif line.startswith('-') or line.startswith('*'):
-                scenario = line[1:].strip()
-                if scenario:
+        for category in categories:
+            category_pattern = rf'###\s+{category}\s*\n(.*?)(?=\n###|\Z)'
+            category_match = re.search(category_pattern, scenario_text, re.DOTALL | re.IGNORECASE)
+            
+            if category_match:
+                found_categories = True
+                category_content = category_match.group(1)
+                lines = category_content.strip().split('\n')
+                
+                for line in lines:
+                    line = line.strip()
+                    if not line or line.startswith('List ') or line.startswith('Only include') or line.startswith('Suggest '):
+                        continue
+                    
+                    if re.match(r'^\d+[\.\)]\s+', line):
+                        scenario = re.sub(r'^\d+[\.\)]\s+', '', line)
+                        scenarios.append(f"[{category.replace(' Tests', '')}] {scenario}")
+
+                    elif line.startswith('-') or line.startswith('*'):
+                        scenario = line[1:].strip()
+                        if scenario and not scenario.endswith(':'):
+                            scenarios.append(f"[{category.replace(' Tests', '')}] {scenario}")
+        
+        if not found_categories:
+            lines = scenario_text.strip().split('\n')
+            for line in lines:
+                line = line.strip()
+                if re.match(r'^\d+[\.\)]\s+', line):
+                    scenario = re.sub(r'^\d+[\.\)]\s+', '', line)
                     scenarios.append(scenario)
+                elif line.startswith('-') or line.startswith('*'):
+                    scenario = line[1:].strip()
+                    if scenario:
+                        scenarios.append(scenario)
     
     if not scenarios:
         scenarios = ["Generic test based on code analysis"]

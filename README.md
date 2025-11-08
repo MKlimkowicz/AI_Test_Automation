@@ -4,7 +4,23 @@ An intelligent test automation framework that uses GPT-4o-mini to automatically 
 
 ## Features
 
-- **Code Analysis**: Reads and analyzes Python code from the `app/` directory
+- **Multi-Language Support**: Analyzes code in 15+ programming languages
+  - Python, JavaScript, TypeScript, Java, Go, Rust, Ruby, PHP, C#, C++, Swift, Kotlin, Scala, R, Shell, SQL
+  - Automatic language detection based on file extensions
+  - Language-specific syntax highlighting in reports
+- **Configuration File Detection**: Automatically reads project configuration files
+  - `package.json`, `Cargo.toml`, `requirements.txt`, `pom.xml`, etc.
+  - Extracts dependencies and framework information
+  - Provides context for more accurate test generation
+- **Documentation-Driven Testing**: Supports test generation from documentation alone
+  - Reads markdown, text, and other documentation formats from `app/documentation/`
+  - Enables pure TDD workflow without existing code
+  - Combines documentation with code when both exist
+- **Categorized Test Scenarios**: AI intelligently organizes tests into categories
+  - **Functional Tests**: Business logic, CRUD, validation, error handling
+  - **Performance Tests**: Load, stress, concurrency (when applicable)
+  - **Security Tests**: Auth, injection prevention, access control (when applicable)
+  - Only suggests categories relevant to your application
 - **AI-Powered Analysis Reports**: Generates comprehensive markdown analysis of your codebase
 - **AI-Powered Test Generation**: Automatically generates pytest tests based on code analysis
 - **Intelligent Self-Healing**: Distinguishes between test errors and actual defects
@@ -114,19 +130,51 @@ python src/ai_engine/report_summarizer.py
 ## How It Works
 
 ### 1. Code Analysis Phase
-The analyzer scans all Python files in the `app/` directory:
-- Recursively reads all `.py` files
-- Detects frameworks (Flask, Django, FastAPI, etc.)
-- Sends code to GPT-4o-mini for comprehensive analysis
+The analyzer scans the `app/` directory for code, configuration, and documentation:
+
+**Language Detection**:
+- Scans for file extensions to detect programming languages
+- Supports 15+ languages (Python, JavaScript, TypeScript, Rust, Go, Java, etc.)
+- Automatically identifies all languages present in your project
+
+**Code Scanning**:
+- Recursively reads source code files based on detected languages
+- Skips large files (>50KB) and ignored directories (`node_modules`, `venv`, etc.)
+- Tags each file with its detected language for proper syntax highlighting
+
+**Configuration File Detection**:
+- Automatically finds language-specific config files:
+  - JavaScript/TypeScript: `package.json`, `tsconfig.json`
+  - Python: `requirements.txt`, `pyproject.toml`, `setup.py`
+  - Rust: `Cargo.toml`
+  - Go: `go.mod`
+  - Java: `pom.xml`, `build.gradle`
+  - And more...
+- Extracts dependency information for better context
+
+**Documentation Integration**:
+- Scans `app/documentation/` for markdown, text, and other doc files
+- Supports documentation-only analysis (pure TDD workflow)
+- Combines documentation with code when both exist
+
+**AI Analysis**:
+- Sends code, config, and documentation to GPT-4o-mini
+- Detects frameworks (Flask, Django, FastAPI, Express, Spring, Actix-web, etc.)
 - Generates `reports/analysis.md` with:
   - Project structure overview
-  - Detected API endpoints
+  - Detected languages and dependencies
+  - API endpoints
   - Database models
   - Key functions and classes
-  - Recommended test scenarios
+  - **Categorized test scenarios** (Functional/Performance/Security)
 
 ### 2. Test Generation
 GPT-4o-mini reads `analysis.md` and generates pytest tests:
+- Extracts test scenarios from categorized sections:
+  - **Functional Tests**: Core feature testing (always included)
+  - **Performance Tests**: Load/stress testing (when applicable)
+  - **Security Tests**: Auth/injection testing (when applicable)
+- Prefixes test files with category tags: `[Functional]`, `[Performance]`, `[Security]`
 - Follows pytest conventions
 - Minimal comments and docstrings
 - Type-hinted code
@@ -207,32 +255,173 @@ addopts =
 
 ## Adding Your Own Code
 
-To analyze your own Python application:
+The framework supports multiple workflows depending on your needs:
 
-1. Replace the sample code in `app/` with your Python application
+### Option 1: Code + Documentation (Recommended)
+Place your application code in `app/` and documentation in `app/documentation/`:
+
+```bash
+app/
+├── main.rs                    # Your Rust code
+├── server.js                  # Your JavaScript code
+├── api.py                     # Your Python code
+└── documentation/
+    ├── api_spec.md            # API documentation
+    └── requirements.md        # Requirements doc
+```
+
+### Option 2: Code Only
+Place your application code directly in `app/`:
+
+```bash
+app/
+├── src/
+│   └── main.rs
+├── Cargo.toml
+└── package.json
+```
+
+### Option 3: Documentation Only (TDD Workflow)
+Place only documentation in `app/documentation/` to generate tests before writing code:
+
+```bash
+app/
+└── documentation/
+    └── api_specification.md
+```
+
+### Running the Analyzer
+
+1. Add your code/documentation to the `app/` directory
 2. Run the analyzer: `python src/ai_engine/analyzer.py`
 3. Review the generated `reports/analysis.md`
 4. Generate tests: `python src/ai_engine/test_generator.py`
 5. Run tests: `pytest`
 
-The framework currently supports Python code analysis. It works best with:
-- Flask/FastAPI/Django applications
-- Python classes and functions
-- Database models (SQLAlchemy, Django ORM, etc.)
+### Supported Languages & Frameworks
+
+**Languages** (15+):
+- Python, JavaScript, TypeScript, Java, Go, Rust, Ruby, PHP, C#, C++, Swift, Kotlin, Scala, R, Shell, SQL
+
+**Frameworks** (auto-detected):
+- Python: Flask, Django, FastAPI
+- JavaScript: Express.js, Next.js
+- Rust: Actix-web, Rocket
+- Java: Spring Boot
+- Go: Gin, Echo
+- And more...
+
+**Configuration Files** (auto-detected):
+- `package.json`, `Cargo.toml`, `requirements.txt`, `pom.xml`, `go.mod`, `Gemfile`, `composer.json`, etc.
+
+## Test Scenario Examples
+
+The repository includes three complete examples demonstrating different use cases:
+
+### Example 1: Rust API with Documentation
+**Location**: `app/rust/` + `app/documentation/rust_api/`
+
+A complete Actix-web Book Library API with comprehensive documentation.
+
+**Code**: `app/rust/main.rs`, `app/rust/Cargo.toml`
+- Actix-web REST API with 7 endpoints
+- CRUD operations for books
+- ISBN uniqueness validation
+- Thread-safe Mutex-based storage
+- Search functionality
+
+**Documentation**: `app/documentation/rust_api/book_library_api.md`
+- Complete API specification
+- Business rules and validation
+- Testing requirements
+- Security considerations
+
+**To Test**:
+```bash
+cp app/rust/* app/
+mkdir -p app/documentation
+# Documentation already in place at app/documentation/rust_api/
+python src/ai_engine/analyzer.py
+```
+
+**Expected**: Analysis with Rust code + documentation, categorized test scenarios including functional, performance, and security tests.
+
+---
+
+### Example 2: Python API Documentation Only (TDD)
+**Location**: `app/documentation/python_api/`
+
+A complete User Management API specification without any code - perfect for TDD workflow.
+
+**Documentation**: `app/documentation/python_api/api_specification.md`
+- 5 REST endpoints (Create, Read, Update, Delete, List)
+- Authentication requirements
+- Validation rules
+- Rate limiting specs
+- Comprehensive test scenarios
+
+**To Test**:
+```bash
+# Remove any code files
+rm -rf app/*.py app/*.js app/*.rs app/Cargo.toml app/package.json
+# Documentation already in place
+python src/ai_engine/analyzer.py
+```
+
+**Expected**: Analysis based purely on documentation, functional and security test scenarios generated before any code exists.
+
+---
+
+### Example 3: JavaScript Express API (Code Only)
+**Location**: `app/javascript/`
+
+A working Express.js Product API without documentation.
+
+**Code**: `app/javascript/server.js`, `app/javascript/package.json`
+- Express.js REST API with 5 endpoints
+- Product CRUD operations
+- In-memory data store
+- Query filtering (price, stock)
+- Input validation and error handling
+
+**To Test**:
+```bash
+rm -rf app/documentation
+cp app/javascript/* app/
+python src/ai_engine/analyzer.py
+```
+
+**Expected**: Analysis detects JavaScript/Express, extracts dependencies from package.json, generates functional test scenarios.
+
+---
+
+### Testing All Examples
+
+See the complete testing guide in each example's documentation or run:
+
+```bash
+# Test each scenario sequentially
+python src/ai_engine/analyzer.py  # Analyzes current app/ content
+cat reports/analysis.md            # Review generated analysis
+python src/ai_engine/test_generator.py  # Generate tests
+pytest                             # Run generated tests
+```
 
 ## Future Enhancements
 
-- [ ] Support for multiple languages (JavaScript, TypeScript, Java, etc.)
+- [x] **Support for multiple languages** - ✅ Implemented (15+ languages)
+- [x] **Performance test generation** - ✅ Implemented (categorized scenarios)
+- [x] **Security test generation** - ✅ Implemented (categorized scenarios)
 - [ ] Integration with CI/CD pipelines (pull request triggers)
 - [ ] Selenium/Playwright UI test generation
 - [ ] API test generation (REST, GraphQL)
 - [ ] Database schema validation tests
-- [ ] Performance test generation
-- [ ] Security test generation
 - [ ] Multi-model AI support (GPT-4, Claude, etc.)
 - [ ] Custom test templates
 - [ ] Test coverage analysis
 - [ ] Live application testing (deployed endpoints)
+- [ ] Docker container analysis
+- [ ] Microservices architecture testing
 
 ## Dependencies
 
