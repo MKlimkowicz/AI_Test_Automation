@@ -212,9 +212,15 @@ def analyze_target(app_dir: str = None) -> str:
     # Merge config files into code files
     code_files.update(config_files)
     
+    # TEMPORARY FILTER: Only scan sample_api files (user will revert later)
+    code_files = {k: v for k, v in code_files.items() if 'sample_api' in k}
+    
     doc_dir = str(Path(app_dir) / "documentation")
     print(f"\nScanning documentation in: {doc_dir}")
     doc_files = scan_documentation(doc_dir)
+    
+    # TEMPORARY FILTER: Only scan sample_api_docs (user will revert later)
+    doc_files = {k: v for k, v in doc_files.items() if 'sample_api' in k}
     
     if not code_files and not doc_files:
         print("\nNo code or documentation found. Creating placeholder analysis.")

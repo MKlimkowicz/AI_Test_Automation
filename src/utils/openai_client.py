@@ -147,21 +147,102 @@ Return ONLY the markdown, no additional explanations."""
     def generate_tests(self, analysis_markdown: str, scenario: str) -> str:
         prompt = f"""Generate pytest tests for the following test scenario based on code analysis.
 
+NOTE: The application under test can be written in ANY language (Python, JavaScript, Java, Go, Rust, etc.), but tests are ALWAYS written in Python using pytest.
+
 Code Analysis:
 {analysis_markdown}
 
 Test Scenario to Implement:
 {scenario}
 
+UNIVERSAL TEST BEST PRACTICES - MUST FOLLOW:
+
+1. TEST ISOLATION - Use unique identifiers for ALL test data:
+   ✅ CORRECT: username = f'user_{{uuid.uuid4().hex[:8]}}'
+   ❌ WRONG: username = 'testuser'  # Will conflict with other tests!
+
+2. FIXTURES - Use fixtures for setup/teardown:
+   ```python
+   @pytest.fixture
+   def unique_id():
+       return uuid.uuid4().hex[:8]
+   
+   @pytest.fixture
+   def test_user_data(unique_id):
+       return {{
+           'username': f'user_{{unique_id}}',
+           'email': f'user_{{unique_id}}@example.com',
+           'password': 'securepass123'
+       }}
+   ```
+
+3. CLEAR ASSERTIONS - Be specific with helpful messages:
+   ✅ CORRECT: assert response.status_code == 201, f"Expected 201, got {{response.status_code}}"
+   ✅ CORRECT: assert 'id' in data, "Response should contain user ID"
+   ❌ WRONG: assert response.status_code == 201
+
+4. APPLICATION TYPE PATTERNS:
+
+   REST API (any language):
+   ```python
+   import requests
+   
+   @pytest.fixture
+   def api_client():
+       session = requests.Session()
+       session.headers.update({{'Content-Type': 'application/json'}})
+       yield session
+       session.close()
+   
+   def test_api_endpoint(api_client):
+       response = api_client.get('http://localhost:8080/api/users')
+       assert response.status_code == 200
+   ```
+
+   CLI Application (any language):
+   ```python
+   import subprocess
+   
+   def test_cli_command():
+       result = subprocess.run(['./myapp', '--help'], capture_output=True, text=True)
+       assert result.returncode == 0
+       assert 'Usage:' in result.stdout
+   ```
+
+   Python Flask/FastAPI:
+   ```python
+   from myapp import create_app
+   
+   @pytest.fixture
+   def client():
+       app = create_app()
+       app.config['TESTING'] = True
+       with app.test_client() as client:
+           yield client
+   ```
+
+5. IMPORTS - Only import what actually exists:
+   - For Python apps: Import only modules/functions that are exportable
+   - For non-Python apps: Use HTTP clients (requests), subprocess, or appropriate client libraries
+   - ✅ CORRECT: from sample_api import create_app
+   - ❌ WRONG: from sample_api import create_user  # Route functions are not importable!
+
 Requirements:
 - Generate complete, executable pytest tests
-- Use minimal or no comments
-- Use minimal docstrings (only for main test functions if necessary)
+- ALWAYS use uuid.uuid4().hex[:8] for unique test data identifiers
+- Use fixtures for test data generation and cleanup
+- Choose appropriate testing approach based on application type:
+  * REST API → use requests/httpx for HTTP calls
+  * CLI → use subprocess for command execution
+  * Python app → import and test directly if applicable
+  * gRPC → use grpc client
+  * WebSocket → use websocket client
 - Use type hints for clarity
 - Follow pytest conventions
 - Make tests independent and reusable
-- Include necessary imports (import directly from module name, e.g., 'from sample_api import ...')
-- The app directory is in Python path, so import modules by their filename without the app prefix
+- Include necessary imports (uuid, pytest, requests/subprocess/etc.)
+- Use minimal comments (code should be self-explanatory)
+- Add docstrings only for test functions to explain what's being tested
 - Return ONLY the Python code, no explanations
 
 Generate the complete test file:"""
@@ -249,6 +330,73 @@ Generate the fixed test code:"""
         )
         
         return response.choices[0].message.content.strip()
+
+    def fix_collection_error(self, test_file: str, test_code: str, error_message: str) -> str:
+        """
+        Fix pytest collection errors (import failures, syntax errors, etc.)
+        
+        Args:
+            test_file: Path to the test file
+            test_code: Current test code
+            error_message: Collection error message from pytest
+        
+        Returns:
+            Fixed test code
+        """
+        prompt = f"""Fix this pytest collection error:
+
+Test File: {test_file}
+
+Current Test Code:
+```python
+{test_code}
+```
+
+Collection Error:
+{error_message}
+
+Common Issues to Fix:
+1. ImportError: Trying to import functions that don't exist or aren't exportable
+   - Solution: Use Flask test client instead of importing route functions
+   - Example: Replace `from sample_api import create_user` with using `client.post('/api/users', ...)`
+
+2. Syntax errors or invalid Python
+   - Solution: Fix syntax issues
+
+3. Missing fixtures or dependencies
+   - Solution: Add required fixtures or imports
+
+Requirements:
+- Fix the collection error while maintaining test intent
+- For Flask apps with app factory pattern, use test client instead of importing route functions
+- Use minimal or no comments
+- Use minimal docstrings
+- Use type hints where appropriate
+- Return ONLY the fixed Python code, no explanations or markdown formatting
+
+Generate the fixed test code:"""
+
+        response = self.client.chat.completions.create(
+            model=self.model,
+            messages=[
+                {"role": "system", "content": "You are an expert test automation engineer. Fix pytest collection errors by analyzing import issues and using proper testing patterns. For Flask apps, use test client instead of importing route functions."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.3,
+            max_tokens=2000
+        )
+        
+        content = response.choices[0].message.content.strip()
+        
+        # Remove markdown code fences if present
+        if content.startswith("```python"):
+            content = content[9:]
+        if content.startswith("```"):
+            content = content[3:]
+        if content.endswith("```"):
+            content = content[:-3]
+        
+        return content.strip()
 
     def analyze_bug(self, defect_info: dict) -> str:
         """
