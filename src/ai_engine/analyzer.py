@@ -7,6 +7,10 @@ from collections import Counter
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from utils.openai_client import OpenAIClient
+from utils.config import config
+from utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 LANGUAGE_EXTENSIONS = {
     'python': ['.py'],
@@ -42,17 +46,20 @@ CONFIG_FILES = {
     'scala': ['build.sbt', 'build.sc']
 }
 
+IGNORED_DIRS = {'__pycache__', 'venv', 'env', '.venv', 'node_modules', '.git', 'documentation'}
+
+
 def detect_languages(app_dir: str) -> List[str]:
     app_path = Path(app_dir)
     
     if not app_path.exists():
+        logger.warning(f"Directory does not exist: {app_dir}")
         return []
     
-    ignored_dirs = {'__pycache__', 'venv', 'env', '.venv', 'node_modules', '.git', 'documentation'}
     extension_counts = Counter()
     
     for root, dirs, files in os.walk(app_path):
-        dirs[:] = [d for d in dirs if d not in ignored_dirs]
+        dirs[:] = [d for d in dirs if d not in IGNORED_DIRS]
         
         for file in files:
             ext = Path(file).suffix.lower()
@@ -66,7 +73,9 @@ def detect_languages(app_dir: str) -> List[str]:
                 detected_languages.append(lang)
                 break
     
+    logger.debug(f"Detected languages: {detected_languages}")
     return detected_languages
+
 
 def get_language_for_extension(ext: str) -> str:
     ext_lower = ext.lower()
@@ -75,11 +84,12 @@ def get_language_for_extension(ext: str) -> str:
             return lang
     return 'text'
 
+
 def scan_code_files(app_dir: str, languages: List[str]) -> Dict[str, Tuple[str, str]]:
     app_path = Path(app_dir)
     
     if not app_path.exists():
-        print(f"Warning: Directory {app_dir} does not exist")
+        logger.warning(f"Directory does not exist: {app_dir}")
         return {}
     
     target_extensions = set()
@@ -87,11 +97,10 @@ def scan_code_files(app_dir: str, languages: List[str]) -> Dict[str, Tuple[str, 
         target_extensions.update(LANGUAGE_EXTENSIONS.get(lang, []))
     
     code_files = {}
-    ignored_dirs = {'__pycache__', 'venv', 'env', '.venv', 'node_modules', '.git', 'documentation'}
-    max_file_size = 50 * 1024
+    max_file_size = config.MAX_FILE_SIZE_KB * 1024
     
     for root, dirs, files in os.walk(app_path):
-        dirs[:] = [d for d in dirs if d not in ignored_dirs]
+        dirs[:] = [d for d in dirs if d not in IGNORED_DIRS]
         
         for file in files:
             ext = Path(file).suffix.lower()
@@ -102,19 +111,20 @@ def scan_code_files(app_dir: str, languages: List[str]) -> Dict[str, Tuple[str, 
                 try:
                     file_size = file_path.stat().st_size
                     if file_size > max_file_size:
-                        print(f"Skipping {relative_path} (too large: {file_size} bytes)")
+                        logger.debug(f"Skipping {relative_path} (too large: {file_size} bytes)")
                         continue
                     
                     with open(file_path, 'r', encoding='utf-8') as f:
                         content = f.read()
                         language = get_language_for_extension(ext)
                         code_files[str(relative_path)] = (content, language)
-                        print(f"Read: {relative_path} ({file_size} bytes, {language})")
+                        logger.debug(f"Read: {relative_path} ({file_size} bytes, {language})")
                 
                 except Exception as e:
-                    print(f"Warning: Could not read {relative_path}: {e}")
+                    logger.warning(f"Could not read {relative_path}: {e}")
     
     return code_files
+
 
 def scan_config_files(app_dir: str, languages: List[str]) -> Dict[str, Tuple[str, str]]:
     app_path = Path(app_dir)
@@ -123,7 +133,7 @@ def scan_config_files(app_dir: str, languages: List[str]) -> Dict[str, Tuple[str
         return {}
     
     config_files = {}
-    max_file_size = 100 * 1024
+    max_file_size = config.MAX_CONFIG_FILE_SIZE_KB * 1024
     
     target_config_files = set()
     for lang in languages:
@@ -134,7 +144,7 @@ def scan_config_files(app_dir: str, languages: List[str]) -> Dict[str, Tuple[str
         return {}
     
     for root, dirs, files in os.walk(app_path):
-        dirs[:] = [d for d in dirs if d not in {'__pycache__', 'venv', 'env', '.venv', 'node_modules', '.git', 'documentation'}]
+        dirs[:] = [d for d in dirs if d not in IGNORED_DIRS]
         
         for file in files:
             if file in target_config_files or any(file.endswith(ext) for ext in target_config_files if ext.startswith('.')):
@@ -144,29 +154,30 @@ def scan_config_files(app_dir: str, languages: List[str]) -> Dict[str, Tuple[str
                 try:
                     file_size = file_path.stat().st_size
                     if file_size > max_file_size:
-                        print(f"Skipping config {relative_path} (too large: {file_size} bytes)")
+                        logger.debug(f"Skipping config {relative_path} (too large: {file_size} bytes)")
                         continue
                     
                     with open(file_path, 'r', encoding='utf-8') as f:
                         content = f.read()
                         config_files[str(relative_path)] = (content, 'config')
-                        print(f"Read config: {relative_path} ({file_size} bytes)")
+                        logger.debug(f"Read config: {relative_path} ({file_size} bytes)")
                 
                 except Exception as e:
-                    print(f"Warning: Could not read config {relative_path}: {e}")
+                    logger.warning(f"Could not read config {relative_path}: {e}")
     
     return config_files
+
 
 def scan_documentation(doc_dir: str) -> Dict[str, str]:
     doc_path = Path(doc_dir)
     
     if not doc_path.exists():
-        print(f"Documentation directory not found: {doc_dir}")
+        logger.debug(f"Documentation directory not found: {doc_dir}")
         return {}
     
     doc_files = {}
     doc_extensions = {'.md', '.txt', '.rst', '.adoc'}
-    max_file_size = 100 * 1024
+    max_file_size = config.MAX_CONFIG_FILE_SIZE_KB * 1024
     
     for root, dirs, files in os.walk(doc_path):
         for file in files:
@@ -178,52 +189,50 @@ def scan_documentation(doc_dir: str) -> Dict[str, str]:
                 try:
                     file_size = file_path.stat().st_size
                     if file_size > max_file_size:
-                        print(f"Skipping documentation {relative_path} (too large: {file_size} bytes)")
+                        logger.debug(f"Skipping documentation {relative_path} (too large: {file_size} bytes)")
                         continue
                     
                     with open(file_path, 'r', encoding='utf-8') as f:
                         content = f.read()
                         doc_files[str(relative_path)] = content
-                        print(f"Read documentation: {relative_path} ({file_size} bytes)")
+                        logger.debug(f"Read documentation: {relative_path} ({file_size} bytes)")
                 
                 except Exception as e:
-                    print(f"Warning: Could not read documentation {relative_path}: {e}")
+                    logger.warning(f"Could not read documentation {relative_path}: {e}")
     
     return doc_files
 
+
 def analyze_target(app_dir: str = None) -> str:
     if app_dir is None:
-        project_root = Path(__file__).parent.parent.parent
-        app_dir = str(project_root / "app")
+        project_root = config.get_project_root()
+        app_dir = str(project_root / config.APP_DIR)
     
-    print(f"Scanning application in: {app_dir}")
+    logger.info(f"Scanning application in: {app_dir}")
     
     detected_languages = detect_languages(app_dir)
     
     if detected_languages:
-        print(f"Detected languages: {', '.join(detected_languages)}")
+        logger.info(f"Detected languages: {', '.join(detected_languages)}")
         code_files = scan_code_files(app_dir, detected_languages)
         config_files = scan_config_files(app_dir, detected_languages)
     else:
-        print("No code files detected in app directory")
+        logger.warning("No code files detected in app directory")
         code_files = {}
         config_files = {}
     
-    # Merge config files into code files
     code_files.update(config_files)
     
-    # TEMPORARY FILTER: Only scan sample_api files (user will revert later)
     code_files = {k: v for k, v in code_files.items() if 'sample_api' in k}
     
     doc_dir = str(Path(app_dir) / "documentation")
-    print(f"\nScanning documentation in: {doc_dir}")
+    logger.info(f"Scanning documentation in: {doc_dir}")
     doc_files = scan_documentation(doc_dir)
     
-    # TEMPORARY FILTER: Only scan sample_api_docs (user will revert later)
     doc_files = {k: v for k, v in doc_files.items() if 'sample_api' in k}
     
     if not code_files and not doc_files:
-        print("\nNo code or documentation found. Creating placeholder analysis.")
+        logger.warning("No code or documentation found. Creating placeholder analysis.")
         analysis_md = f"""# Code Analysis Report
 
 ## Project Overview
@@ -240,18 +249,18 @@ No code or documentation files found in the app directory.
 2. Add documentation to app/documentation directory
 3. Run analyzer again after adding content
 """
-        project_root = Path(__file__).parent.parent.parent
+        project_root = config.get_project_root()
         output_path = project_root / "reports" / "analysis.md"
         output_path.parent.mkdir(parents=True, exist_ok=True)
         
         with open(output_path, "w") as f:
             f.write(analysis_md)
         
-        print(f"Placeholder analysis saved to: {output_path}")
+        logger.info(f"Placeholder analysis saved to: {output_path}")
         return str(output_path)
     
-    print(f"\nFound {len(code_files)} code file(s) and {len(doc_files)} documentation file(s)")
-    print("Analyzing with GPT-4o-mini...")
+    logger.info(f"Found {len(code_files)} code file(s) and {len(doc_files)} documentation file(s)")
+    logger.info(f"Analyzing with {config.OPENAI_MODEL}...")
     
     client = OpenAIClient()
     analysis_md = client.analyze_code_and_docs(code_files, doc_files, detected_languages)
@@ -264,21 +273,21 @@ No code or documentation files found in the app directory.
         analysis_md = analysis_md[:-3]
     analysis_md = analysis_md.strip()
     
-    project_root = Path(__file__).parent.parent.parent
+    project_root = config.get_project_root()
     output_path = project_root / "reports" / "analysis.md"
     output_path.parent.mkdir(parents=True, exist_ok=True)
     
     with open(output_path, "w") as f:
         f.write(analysis_md)
     
-    print(f"\nAnalysis complete!")
-    print(f"Report saved to: {output_path}")
-    print(f"\nAnalysis Preview:")
-    print("=" * 80)
-    print(analysis_md[:500] + "..." if len(analysis_md) > 500 else analysis_md)
-    print("=" * 80)
+    logger.info("Analysis complete!")
+    logger.info(f"Report saved to: {output_path}")
+    
+    preview = analysis_md[:500] + "..." if len(analysis_md) > 500 else analysis_md
+    logger.debug(f"Analysis Preview:\n{'=' * 80}\n{preview}\n{'=' * 80}")
     
     return str(output_path)
+
 
 if __name__ == "__main__":
     analyze_target()

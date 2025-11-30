@@ -1,178 +1,214 @@
 #!/bin/bash
 
-# AI Test Automation - Full Workflow Runner
-# This script runs the complete test automation workflow from analysis to reporting
-
-# Color codes for output
 GREEN='\033[0;32m'
 RED='\033[0;31m'
 BLUE='\033[0;34m'
 YELLOW='\033[1;33m'
 CYAN='\033[0;36m'
-NC='\033[0m' # No Color
+NC='\033[0m'
 
-# Project root directory
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+LOG_FILE="$PROJECT_ROOT/logs/workflow.log"
 cd "$PROJECT_ROOT"
 
-# Function to print colored messages
-print_step() {
+mkdir -p "$PROJECT_ROOT/logs"
+
+if [ -f "$PROJECT_ROOT/.env" ]; then
+    set -a
+    source "$PROJECT_ROOT/.env"
+    set +a
+fi
+
+log_step() {
+    local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
     echo -e "\n${BLUE}═══════════════════════════════════════════════════════════${NC}"
     echo -e "${CYAN}▶ $1${NC}"
     echo -e "${BLUE}═══════════════════════════════════════════════════════════${NC}\n"
+    echo "[$timestamp] [STEP] $1" >> "$LOG_FILE"
 }
 
-print_success() {
+log_success() {
+    local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
     echo -e "${GREEN}✓ $1${NC}"
+    echo "[$timestamp] [SUCCESS] $1" >> "$LOG_FILE"
 }
 
-print_error() {
+log_error() {
+    local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
     echo -e "${RED}✗ $1${NC}"
+    echo "[$timestamp] [ERROR] $1" >> "$LOG_FILE"
 }
 
-print_warning() {
+log_warning() {
+    local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
     echo -e "${YELLOW}⚠ $1${NC}"
+    echo "[$timestamp] [WARNING] $1" >> "$LOG_FILE"
 }
 
-print_info() {
+log_info() {
+    local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
     echo -e "${CYAN}ℹ $1${NC}"
+    echo "[$timestamp] [INFO] $1" >> "$LOG_FILE"
 }
 
-# Function to check prerequisites
 check_prerequisites() {
-    print_step "Checking Prerequisites"
+    log_step "Checking Prerequisites"
     
-    # Check Python
     if ! command -v python3 &> /dev/null; then
-        print_error "Python 3 is not installed"
+        log_error "Python 3 is not installed"
         exit 1
     fi
-    print_success "Python 3 found: $(python3 --version)"
+    log_success "Python 3 found: $(python3 --version)"
     
-    # Check OPENAI_API_KEY
     if [ -z "$OPENAI_API_KEY" ]; then
-        print_error "OPENAI_API_KEY environment variable is not set"
-        print_info "Set it with: export OPENAI_API_KEY='your-key-here'"
+        log_error "OPENAI_API_KEY environment variable is not set"
+        log_info "Set it with: export OPENAI_API_KEY='your-key-here'"
         exit 1
     fi
-    print_success "OPENAI_API_KEY is set"
+    log_success "OPENAI_API_KEY is set"
     
-    # Check if required Python packages are installed
     if ! python3 -c "import flask" 2>/dev/null; then
-        print_warning "Flask not found. Installing dependencies..."
+        log_warning "Flask not found. Installing dependencies..."
         pip3 install -r requirements.txt
     fi
-    print_success "Required packages are installed"
+    log_success "Required packages are installed"
 }
 
-# Function to start the Flask API in background
 start_api() {
-    print_step "Starting Sample API Server"
+    log_step "Starting Sample API Server"
     
-    # Kill any existing Flask processes on port 5000
     lsof -ti:5000 | xargs kill -9 2>/dev/null || true
     
-    # Start Flask API in background
     python3 app/sample_api.py > /tmp/flask_api.log 2>&1 &
     API_PID=$!
     
-    # Wait for API to be ready
-    print_info "Waiting for API to start..."
+    log_info "Waiting for API to start..."
     sleep 3
     
-    # Check if API is running
     if curl -s http://localhost:5000/health > /dev/null 2>&1; then
-        print_success "API is running (PID: $API_PID)"
+        log_success "API is running (PID: $API_PID)"
         echo $API_PID > /tmp/flask_api.pid
     else
-        print_error "Failed to start API"
+        log_error "Failed to start API"
         cat /tmp/flask_api.log
         exit 1
     fi
 }
 
-# Function to stop the Flask API
 stop_api() {
     if [ -f /tmp/flask_api.pid ]; then
         API_PID=$(cat /tmp/flask_api.pid)
         if ps -p $API_PID > /dev/null 2>&1; then
-            print_info "Stopping API (PID: $API_PID)..."
+            log_info "Stopping API (PID: $API_PID)..."
             kill $API_PID 2>/dev/null || true
             rm /tmp/flask_api.pid
-            print_success "API stopped"
+            log_success "API stopped"
         fi
     fi
 }
 
-# Trap to ensure API is stopped on script exit
 trap stop_api EXIT
 
-# Function to run analyzer
 run_analyzer() {
-    print_step "Step 1: Analyzing Application Code & Documentation"
+    log_step "Step 1: Analyzing Application Code & Documentation"
     
     if python3 src/ai_engine/analyzer.py; then
-        print_success "Analysis complete"
+        log_success "Analysis complete"
         
-        # Show what was analyzed
-        if [ -f "reports/code_analysis.md" ]; then
-            print_info "Analysis report generated: reports/code_analysis.md"
+        if [ -f "reports/analysis.md" ]; then
+            log_info "Analysis report generated: reports/analysis.md"
             echo -e "\n${CYAN}Analysis Summary:${NC}"
-            head -n 20 reports/code_analysis.md
+            head -n 20 reports/analysis.md
         fi
     else
-        print_error "Analysis failed"
+        log_error "Analysis failed"
         exit 1
     fi
 }
 
-# Function to generate tests
+generate_fixtures() {
+    log_step "Step 2: Generating Fixtures (conftest.py)"
+    
+    if python3 src/ai_engine/fixture_generator.py; then
+        log_success "Fixture generation complete"
+        
+        if [ -f "tests/conftest.py" ]; then
+            log_info "Generated fixtures: tests/conftest.py"
+        fi
+    else
+        log_error "Fixture generation failed"
+        exit 1
+    fi
+}
+
+validate_fixtures() {
+    log_step "Step 3: Validating Fixtures"
+
+    if python3 src/ai_engine/test_validator.py conftest \
+        --conftest-path tests/conftest.py \
+        --best-practices-path test_templates/test_best_practices.md; then
+        log_success "Fixture validation passed"
+    else
+        log_error "Fixture validation failed"
+        log_info "See reports/validation_conftest.json for details"
+        exit 1
+    fi
+}
+
 generate_tests() {
-    print_step "Step 2: Generating Test Scenarios"
+    log_step "Step 4: Generating Test Scenarios"
     
     if python3 src/ai_engine/test_generator.py; then
-        print_success "Test generation complete"
+        log_success "Test generation complete"
         
-        # Count generated tests
         TEST_COUNT=$(find tests/generated -name "test_*.py" 2>/dev/null | wc -l | tr -d ' ')
-        print_info "Generated $TEST_COUNT test file(s)"
+        log_info "Generated $TEST_COUNT test file(s)"
     else
-        print_error "Test generation failed"
+        log_error "Test generation failed"
         exit 1
     fi
 }
 
-# Function to run tests
+validate_tests() {
+    log_step "Step 5: Validating Generated Tests"
+
+    if python3 src/ai_engine/test_validator.py tests \
+        --tests-dir tests/generated \
+        --conftest-path tests/conftest.py; then
+        log_success "Test validation passed"
+    else
+        log_error "Test validation failed"
+        log_info "See reports/validation_tests.json for details"
+        exit 1
+    fi
+}
+
 run_tests() {
-    print_step "Step 3: Executing Tests"
+    log_step "Step 6: Executing Tests"
     
-    # Run pytest with JSON report
     if pytest tests/generated/ \
         --html=reports/html/report.html \
         --self-contained-html \
         --json-report \
         --json-report-file=reports/pytest-report.json \
         -v; then
-        print_success "All tests passed!"
+        log_success "All tests passed!"
         TEST_STATUS="PASSED"
     else
-        print_warning "Some tests failed (expected for bug detection)"
+        log_warning "Some tests failed (expected for bug detection)"
         TEST_STATUS="FAILED"
     fi
 }
 
-# Function to run self-healing
 run_self_healing() {
-    print_step "Step 4: Iterative Self-Healing"
+    log_step "Step 7: Iterative Self-Healing"
     
     if python3 src/ai_engine/self_healer.py; then
-        print_success "Self-healing complete"
+        log_success "Self-healing complete"
         
-        # Show healing summary
         if [ -f "reports/healing_analysis.json" ]; then
-            print_info "Healing analysis saved: reports/healing_analysis.json"
+            log_info "Healing analysis saved: reports/healing_analysis.json"
             
-            # Extract key metrics using Python
             python3 << EOF
 import json
 try:
@@ -192,69 +228,62 @@ except Exception as e:
 EOF
         fi
     else
-        print_error "Self-healing failed"
+        log_error "Self-healing failed"
         exit 1
     fi
 }
 
-# Function to check commit conditions
 check_commit() {
-    print_step "Step 5: Checking Commit Conditions"
+    log_step "Step 8: Checking Commit Conditions"
     
     if python3 src/ai_engine/commit_controller.py; then
         COMMIT_ALLOWED=$(python3 src/ai_engine/commit_controller.py 2>&1 | grep -o "commit_allowed=[a-z]*" | cut -d= -f2)
         
         if [ "$COMMIT_ALLOWED" = "true" ]; then
-            print_success "Commit is ALLOWED"
-            print_info "Only actual defects remain (or all tests passed)"
+            log_success "Commit is ALLOWED"
+            log_info "Only actual defects remain (or all tests passed)"
         else
-            print_warning "Commit is BLOCKED"
-            print_info "Unhealed test errors still exist"
+            log_warning "Commit is BLOCKED"
+            log_info "Unhealed test errors still exist"
         fi
     else
-        print_warning "Commit is BLOCKED"
-        print_info "Reports will still be generated for investigation"
+        log_warning "Commit is BLOCKED"
+        log_info "Reports will still be generated for investigation"
         COMMIT_ALLOWED="false"
     fi
 }
 
-# Function to generate reports
 generate_reports() {
-    print_step "Step 6: Generating Final Reports"
+    log_step "Step 9: Generating Final Reports"
     
     if python3 src/ai_engine/report_summarizer.py; then
-        print_success "Reports generated"
+        log_success "Reports generated"
         
-        # List generated reports
-        print_info "Generated reports:"
+        log_info "Generated reports:"
         [ -f "reports/html/report.html" ] && echo "  • reports/html/report.html"
         [ -f "reports/healing_analysis.json" ] && echo "  • reports/healing_analysis.json"
         [ -f "reports/BUGS.md" ] && echo "  • reports/BUGS.md"
         
-        # Find latest summary
         LATEST_SUMMARY=$(ls -t reports/summaries/summary_*.md 2>/dev/null | head -1)
         if [ -n "$LATEST_SUMMARY" ]; then
             echo "  • $LATEST_SUMMARY"
             
-            # Display summary preview
             echo -e "\n${CYAN}Summary Preview:${NC}"
             head -n 30 "$LATEST_SUMMARY"
         fi
     else
-        print_error "Report generation failed"
+        log_error "Report generation failed"
         exit 1
     fi
 }
 
-# Function to display final summary
 display_final_summary() {
-    print_step "Workflow Complete!"
+    log_step "Workflow Complete!"
     
     echo -e "${GREEN}╔════════════════════════════════════════════════════════╗${NC}"
     echo -e "${GREEN}║           AI Test Automation - Final Summary          ║${NC}"
     echo -e "${GREEN}╚════════════════════════════════════════════════════════╝${NC}\n"
     
-    # Test results
     if [ -f "reports/pytest-report.json" ]; then
         python3 << EOF
 import json
@@ -276,7 +305,6 @@ except:
 EOF
     fi
     
-    # Healing results
     if [ -f "reports/healing_analysis.json" ]; then
         python3 << EOF
 import json
@@ -298,13 +326,11 @@ except:
 EOF
     fi
     
-    # Reports location
     echo -e "\n${CYAN}Reports Location:${NC}"
     echo "  • HTML Report:    reports/html/report.html"
     echo "  • Bug Report:     reports/BUGS.md"
     echo "  • Latest Summary: $(ls -t reports/summaries/summary_*.md 2>/dev/null | head -1)"
     
-    # Check commit status and display appropriate message
     if [ "$COMMIT_ALLOWED" = "false" ]; then
         echo -e "\n${YELLOW}⚠ Workflow completed with blocked commit${NC}"
         echo -e "${YELLOW}  Review reports above and fix issues before committing${NC}\n"
@@ -313,7 +339,6 @@ EOF
     fi
 }
 
-# Main execution
 main() {
     echo -e "${GREEN}"
     echo "╔═══════════════════════════════════════════════════════════╗"
@@ -323,19 +348,21 @@ main() {
     echo "╚═══════════════════════════════════════════════════════════╝"
     echo -e "${NC}\n"
     
-    # Run workflow steps
+    log_info "Workflow started at $(date '+%Y-%m-%d %H:%M:%S')"
+    
     check_prerequisites
     start_api
     run_analyzer
+    generate_fixtures
+    validate_fixtures
     generate_tests
+    validate_tests
     run_tests
     run_self_healing
     check_commit
     generate_reports
     display_final_summary
     
-    # Exit with appropriate code based on commit status
-    # This allows CI/CD to detect failures while still generating reports
     if [ "$COMMIT_ALLOWED" = "false" ]; then
         exit 1
     else
@@ -343,6 +370,4 @@ main() {
     fi
 }
 
-# Run main function
 main
-

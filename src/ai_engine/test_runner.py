@@ -4,24 +4,13 @@ import sys
 from pathlib import Path
 from typing import Dict, List, Optional
 
+
 def run_single_test(test_nodeid: str, project_root: Optional[Path] = None) -> Dict:
-    """
-    Run a single test by its nodeid and return the result.
-    
-    Args:
-        test_nodeid: The pytest nodeid (e.g., "tests/generated/test_scenario_1.py::test_function")
-        project_root: Project root directory (defaults to auto-detect)
-    
-    Returns:
-        Dict with test result information
-    """
     if project_root is None:
         project_root = Path(__file__).parent.parent.parent
     
-    # Create a temporary report file for this single test run
     temp_report = project_root / "reports" / f"temp_test_report_{hash(test_nodeid)}.json"
     
-    # Run pytest for just this test
     cmd = [
         sys.executable, "-m", "pytest",
         test_nodeid,
@@ -40,28 +29,24 @@ def run_single_test(test_nodeid: str, project_root: Optional[Path] = None) -> Di
             timeout=60
         )
         
-        # Read the JSON report
         if temp_report.exists():
             with open(temp_report, "r") as f:
                 report_data = json.load(f)
             
-            # Clean up temp file
             temp_report.unlink()
             
-            # Extract test result
             tests = report_data.get("tests", [])
             if tests:
                 test_result = tests[0]
                 return {
                     "nodeid": test_result.get("nodeid"),
-                    "outcome": test_result.get("outcome"),  # "passed", "failed", "skipped"
+                    "outcome": test_result.get("outcome"),
                     "duration": test_result.get("duration", 0),
                     "call": test_result.get("call", {}),
                     "error": test_result.get("call", {}).get("longrepr", ""),
                     "exit_code": result.returncode
                 }
         
-        # If no report, return based on exit code
         return {
             "nodeid": test_nodeid,
             "outcome": "passed" if result.returncode == 0 else "failed",
@@ -91,17 +76,8 @@ def run_single_test(test_nodeid: str, project_root: Optional[Path] = None) -> Di
             "exit_code": -1
         }
 
+
 def run_multiple_tests(test_nodeids: List[str], project_root: Optional[Path] = None) -> List[Dict]:
-    """
-    Run multiple tests and return their results.
-    
-    Args:
-        test_nodeids: List of pytest nodeids
-        project_root: Project root directory (defaults to auto-detect)
-    
-    Returns:
-        List of test result dictionaries
-    """
     results = []
     for nodeid in test_nodeids:
         print(f"Running test: {nodeid}")
@@ -118,16 +94,8 @@ def run_multiple_tests(test_nodeids: List[str], project_root: Optional[Path] = N
     
     return results
 
+
 def run_all_tests(project_root: Optional[Path] = None) -> Dict:
-    """
-    Run all tests in the tests/generated directory.
-    
-    Args:
-        project_root: Project root directory (defaults to auto-detect)
-    
-    Returns:
-        Dict with full test report
-    """
     if project_root is None:
         project_root = Path(__file__).parent.parent.parent
     
@@ -170,8 +138,8 @@ def run_all_tests(project_root: Optional[Path] = None) -> Dict:
             "error": str(e)
         }
 
+
 if __name__ == "__main__":
-    # Test the runner
     if len(sys.argv) > 1:
         test_nodeid = sys.argv[1]
         result = run_single_test(test_nodeid)
@@ -183,4 +151,3 @@ if __name__ == "__main__":
         print(f"Total: {summary.get('total', 0)}")
         print(f"Passed: {summary.get('passed', 0)}")
         print(f"Failed: {summary.get('failed', 0)}")
-

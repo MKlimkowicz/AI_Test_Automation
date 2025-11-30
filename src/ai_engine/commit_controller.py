@@ -1,29 +1,25 @@
 import json
 import sys
 from pathlib import Path
-from typing import Dict
 
-def check_commit_conditions(healing_analysis_path: str = "reports/healing_analysis.json") -> bool:
-    """
-    Check if commit should be allowed based on healing analysis results.
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from utils.config import config
+from utils.logger import get_logger
+
+logger = get_logger(__name__)
+
+
+def check_commit_conditions(healing_analysis_path: str = None) -> bool:
+    project_root = config.get_project_root()
     
-    Commit is allowed only if:
-    - All TEST_ERROR tests were successfully healed and are passing
-    - Only ACTUAL_DEFECT failures remain (or no failures at all)
-    - No tests exceeded max healing attempts while still failing
+    if healing_analysis_path is None:
+        healing_analysis_path = "reports/healing_analysis.json"
     
-    Args:
-        healing_analysis_path: Path to healing analysis JSON file
-    
-    Returns:
-        bool: True if commit should be allowed, False otherwise
-    """
-    project_root = Path(__file__).parent.parent.parent
     analysis_path = project_root / healing_analysis_path
     
     if not analysis_path.exists():
-        print("❌ Healing analysis file not found")
-        print(f"   Expected: {analysis_path}")
+        logger.error("Healing analysis file not found")
+        logger.error(f"Expected: {analysis_path}")
         return False
     
     with open(analysis_path, "r") as f:
@@ -34,63 +30,58 @@ def check_commit_conditions(healing_analysis_path: str = "reports/healing_analys
     defect_count = analysis.get("defect_count", 0)
     exceeded_count = analysis.get("exceeded_count", 0)
     
-    print("="*80)
-    print("COMMIT DECISION")
-    print("="*80)
-    print(f"✓ Successfully Healed Tests: {healed_count}")
-    print(f"⚠ Actual Defects Found: {defect_count}")
-    print(f"✗ Max Attempts Exceeded: {exceeded_count}")
-    print()
+    logger.info("=" * 80)
+    logger.info("COMMIT DECISION")
+    logger.info("=" * 80)
+    logger.info(f"Successfully Healed Tests: {healed_count}")
+    logger.info(f"Actual Defects Found: {defect_count}")
+    logger.info(f"Max Attempts Exceeded: {exceeded_count}")
     
     if commit_allowed:
-        print("✅ COMMIT ALLOWED")
-        print()
-        print("Reasons:")
-        print("  • All TEST_ERROR tests successfully healed and passing")
+        logger.info("COMMIT ALLOWED")
+        logger.info("")
+        logger.info("Reasons:")
+        logger.info("  - All TEST_ERROR tests successfully healed and passing")
         if defect_count > 0:
-            print(f"  • {defect_count} ACTUAL_DEFECT(s) identified (require manual investigation)")
+            logger.info(f"  - {defect_count} ACTUAL_DEFECT(s) identified (require manual investigation)")
         else:
-            print("  • No defects found - all tests passing")
-        print()
-        print("Next steps:")
-        print("  1. Review BUGS.md for any actual defects")
-        print("  2. Commit healed tests")
-        print("  3. Investigate actual defects if any")
+            logger.info("  - No defects found - all tests passing")
+        logger.info("")
+        logger.info("Next steps:")
+        logger.info("  1. Review BUGS.md for any actual defects")
+        logger.info("  2. Commit healed tests")
+        logger.info("  3. Investigate actual defects if any")
     else:
-        print("❌ COMMIT BLOCKED")
-        print()
-        print("Reasons:")
+        logger.warning("COMMIT BLOCKED")
+        logger.warning("")
+        logger.warning("Reasons:")
         if exceeded_count > 0:
-            print(f"  • {exceeded_count} test(s) still failing after max healing attempts")
-            print("  • These tests could not be automatically fixed")
-        print()
-        print("Required actions before commit:")
-        print("  1. Review tests that exceeded max attempts")
-        print("  2. Manually fix the test issues")
-        print("  3. Re-run the healing process")
-        print()
+            logger.warning(f"  - {exceeded_count} test(s) still failing after max healing attempts")
+            logger.warning("  - These tests could not be automatically fixed")
+        logger.warning("")
+        logger.warning("Required actions before commit:")
+        logger.warning("  1. Review tests that exceeded max attempts")
+        logger.warning("  2. Manually fix the test issues")
+        logger.warning("  3. Re-run the healing process")
+        logger.warning("")
         
-        # Show which tests exceeded max attempts
         exceeded_tests = analysis.get("max_attempts_exceeded", [])
         if exceeded_tests:
-            print("Tests that exceeded max attempts:")
+            logger.warning("Tests that exceeded max attempts:")
             for test in exceeded_tests:
                 test_name = test.get("test_name", "unknown")
                 attempts = test.get("attempts", 0)
-                print(f"  • {test_name} ({attempts} attempts)")
+                logger.warning(f"  - {test_name} ({attempts} attempts)")
     
-    print("="*80)
+    logger.info("=" * 80)
     
     return commit_allowed
 
+
 def main():
-    """
-    Main entry point for commit controller.
-    Returns exit code 0 if commit allowed, 1 if blocked.
-    """
     allowed = check_commit_conditions()
     sys.exit(0 if allowed else 1)
 
+
 if __name__ == "__main__":
     main()
-

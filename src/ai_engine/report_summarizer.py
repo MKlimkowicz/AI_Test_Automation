@@ -1,18 +1,21 @@
-import os
 import json
 import sys
 from pathlib import Path
 from datetime import datetime
-from typing import Dict
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from utils.openai_client import OpenAIClient
+from utils.config import config
+from utils.logger import get_logger
 from ai_engine.bug_reporter import generate_bugs_report
+
+logger = get_logger(__name__)
+
 
 def summarize_report(html_report_path: str, healing_analysis_path: str) -> str:
     client = OpenAIClient()
     
-    project_root = Path(__file__).parent.parent.parent
+    project_root = config.get_project_root()
     html_path = project_root / html_report_path
     healing_path = project_root / healing_analysis_path
     
@@ -39,7 +42,7 @@ def summarize_report(html_report_path: str, healing_analysis_path: str) -> str:
         "tests": report_data.get("tests", [])
     }
     
-    print("Generating AI summary...")
+    logger.info("Generating AI summary...")
     
     markdown_summary = client.summarize_report(report_info, healing_data)
     
@@ -51,15 +54,13 @@ def summarize_report(html_report_path: str, healing_analysis_path: str) -> str:
         markdown_summary = markdown_summary[:-3]
     markdown_summary = markdown_summary.strip()
     
-    # Generate BUGS.md if there are actual defects
     actual_defects = healing_data.get("actual_defects", [])
     if actual_defects:
-        print(f"\nGenerating detailed bug report for {len(actual_defects)} defect(s)...")
+        logger.info(f"Generating detailed bug report for {len(actual_defects)} defect(s)...")
         try:
             bugs_file = generate_bugs_report(healing_analysis_path)
             if bugs_file:
-                print(f"✓ BUGS.md generated successfully: {bugs_file}")
-                # Add reference to BUGS.md in summary
+                logger.info(f"BUGS.md generated successfully: {bugs_file}")
                 markdown_summary += f"\n\n---\n\n## Bug Report\n\n"
                 markdown_summary += f"**{len(actual_defects)} potential bug(s) identified.**\n\n"
                 markdown_summary += f"Detailed bug analysis available in: [`reports/BUGS.md`](../BUGS.md)\n\n"
@@ -70,13 +71,13 @@ def summarize_report(html_report_path: str, healing_analysis_path: str) -> str:
                 markdown_summary += f"- Suggested investigation areas\n"
                 markdown_summary += f"- Potential fixes\n"
             else:
-                print("⚠ BUGS.md generation returned empty path")
+                logger.warning("BUGS.md generation returned empty path")
         except Exception as e:
-            print(f"✗ Error generating BUGS.md: {e}")
+            logger.error(f"Error generating BUGS.md: {e}")
             import traceback
-            traceback.print_exc()
+            logger.debug(traceback.format_exc())
     else:
-        print("\nNo actual defects found - skipping BUGS.md generation")
+        logger.info("No actual defects found - skipping BUGS.md generation")
     
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     summary_filename = f"summary_{timestamp}.md"
@@ -86,14 +87,14 @@ def summarize_report(html_report_path: str, healing_analysis_path: str) -> str:
     with open(summary_path, "w") as f:
         f.write(markdown_summary)
     
-    print(f"✓ Summary saved to: {summary_path}")
+    logger.info(f"Summary saved to: {summary_path}")
     
     return str(summary_path)
+
 
 if __name__ == "__main__":
     summary_file = summarize_report(
         "reports/html/report.html",
         "reports/healing_analysis.json"
     )
-    print(f"\nSummary generated: {summary_file}")
-
+    logger.info(f"Summary generated: {summary_file}")

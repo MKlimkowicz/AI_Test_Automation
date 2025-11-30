@@ -1,222 +1,647 @@
-# Universal Test Best Practices
+# Test Best Practices Guide
 
 ## Overview
 
-This guide provides universal best practices for writing pytest tests for applications written in **ANY programming language** (Python, JavaScript, Java, Go, Rust, C#, etc.). 
-
-**Key Principle**: Tests are ALWAYS written in Python using pytest, but the application under test can be in any language.
+This guide provides best practices for writing pytest fixtures in conftest.py and tests for applications written in ANY programming language. Tests are always written in Python using pytest.
 
 ---
 
-## Core Principles (Apply to All Applications)
+# Part 1: Conftest Fixtures and Helper Functions
 
-### 1. Test Isolation
+## Fixture Scopes
 
-**Every test must be independent and not affect other tests.**
-
-✅ **Use unique identifiers for all test data:**
-```python
-import uuid
-
-def test_create_user(api_client):
-    unique_id = uuid.uuid4().hex[:8]
-    username = f'user_{unique_id}'
-    email = f'user_{unique_id}@example.com'
-    # Now safe from conflicts with other tests
-```
-
-❌ **Never use hardcoded shared data:**
-```python
-def test_create_user(api_client):
-    username = 'testuser'  # ❌ Will conflict with other tests!
-```
-
-### 2. Reusable Fixtures
-
-**Use pytest fixtures for setup, teardown, and shared resources.**
+### Function Scope (Default)
 
 ```python
 import pytest
+import uuid
 
 @pytest.fixture
 def unique_id():
-    """Generate unique identifier for test data"""
+    return uuid.uuid4().hex[:8]
+```
+
+### Module Scope
+
+```python
+import pytest
+import requests
+
+@pytest.fixture(scope="module")
+def api_session():
+    session = requests.Session()
+    session.headers.update({"Content-Type": "application/json"})
+    yield session
+    session.close()
+```
+
+### Session Scope
+
+```python
+import pytest
+
+@pytest.fixture(scope="session")
+def database_connection():
+    import psycopg2
+    conn = psycopg2.connect("dbname=test user=test password=test")
+    yield conn
+    conn.close()
+```
+
+---
+
+## Core Fixture Patterns
+
+### Unique Identifier Generator
+
+```python
+import pytest
+import uuid
+
+@pytest.fixture
+def unique_id():
     return uuid.uuid4().hex[:8]
 
 @pytest.fixture
+def unique_email(unique_id):
+    return f"user_{unique_id}@example.com"
+
+@pytest.fixture
+def unique_username(unique_id):
+    return f"user_{unique_id}"
+```
+
+### Test Data Factory
+
+```python
+import pytest
+import uuid
+
+@pytest.fixture
+def user_data_factory():
+    def _create_user_data(username=None, email=None, password="securepass123"):
+        uid = uuid.uuid4().hex[:8]
+        return {
+            "username": username or f"user_{uid}",
+            "email": email or f"user_{uid}@example.com",
+            "password": password
+        }
+    return _create_user_data
+
+@pytest.fixture
 def test_user_data(unique_id):
-    """Generate unique user data"""
     return {
-        'username': f'user_{unique_id}',
-        'email': f'user_{unique_id}@example.com',
-        'password': 'securepass123'
+        "username": f"user_{unique_id}",
+        "email": f"user_{unique_id}@example.com",
+        "password": "securepass123"
     }
-
-@pytest.fixture
-def api_client():
-    """HTTP client for API testing"""
-    import requests
-    session = requests.Session()
-    session.headers.update({'Content-Type': 'application/json'})
-    yield session
-    session.close()
 ```
 
-### 3. Unique Test Data
-
-**Always generate unique data to avoid conflicts:**
-
-- Usernames: `f'user_{uuid.uuid4().hex[:8]}'`
-- Emails: `f'user_{uuid.uuid4().hex[:8]}@example.com'`
-- IDs: `uuid.uuid4().hex[:8]`
-- Filenames: `f'test_{uuid.uuid4().hex[:8]}.txt'`
-
-### 4. Teardown/Cleanup
-
-**Clean up resources after tests to avoid side effects.**
+### Resource Cleanup with Yield
 
 ```python
-@pytest.fixture
-def temp_resource():
-    """Create resource, cleanup after test"""
-    resource = create_resource()
-    yield resource
-    # Cleanup runs after test
-    cleanup_resource(resource)
+import pytest
+import os
+import tempfile
 
 @pytest.fixture
-def database_transaction(db_connection):
-    """Rollback database changes after test"""
-    transaction = db_connection.begin()
-    yield db_connection
-    transaction.rollback()
-```
+def temp_file(unique_id):
+    filepath = f"/tmp/test_{unique_id}.txt"
+    with open(filepath, "w") as f:
+        f.write("test content")
+    yield filepath
+    if os.path.exists(filepath):
+        os.unlink(filepath)
 
-### 5. Clear Assertions
-
-**Be specific about what you're testing.**
-
-✅ **Good - Specific with helpful messages:**
-```python
-assert response.status_code == 201, f"Expected 201, got {response.status_code}"
-assert 'id' in data, "Response should contain user ID"
-assert data['username'] == expected_username
-```
-
-❌ **Bad - Vague without context:**
-```python
-assert response.status_code == 201
-assert data
+@pytest.fixture
+def created_resource(api_client, api_base_url, test_user_data):
+    response = api_client.post(f"{api_base_url}/api/users", json=test_user_data)
+    resource_id = response.json().get("id")
+    yield resource_id
+    api_client.delete(f"{api_base_url}/api/users/{resource_id}")
 ```
 
 ---
 
-## Application Type Examples
+## Application-Type Specific Fixtures
 
-### REST API Testing (Any Language)
-
-Test REST APIs written in Python (Flask, FastAPI), JavaScript (Express), Java (Spring Boot), Go (Gin), Rust (Actix), etc.
+### REST API Fixtures
 
 ```python
 import pytest
 import requests
-import uuid
 
 @pytest.fixture
 def api_base_url():
-    """Base URL for the API"""
-    return "http://localhost:8080"
+    return "http://localhost:5000"
 
 @pytest.fixture
-def api_client(api_base_url):
-    """HTTP client for API testing"""
+def api_client():
     session = requests.Session()
-    session.headers.update({'Content-Type': 'application/json'})
+    session.headers.update({"Content-Type": "application/json"})
     yield session
     session.close()
 
-def test_create_user(api_client, api_base_url):
-    """Test user creation endpoint"""
-    unique_id = uuid.uuid4().hex[:8]
-    user_data = {
-        'username': f'user_{unique_id}',
-        'email': f'user_{unique_id}@example.com',
-        'password': 'securepass123'
-    }
-    
-    response = api_client.post(f'{api_base_url}/api/users', json=user_data)
-    
-    assert response.status_code == 201
-    data = response.json()
-    assert 'id' in data
-    assert data['username'] == user_data['username']
-
-def test_get_user(api_client, api_base_url):
-    """Test retrieving user by ID"""
-    # Create user first
-    unique_id = uuid.uuid4().hex[:8]
-    user_data = {'username': f'user_{unique_id}', 'email': f'user_{unique_id}@example.com', 'password': 'pass123'}
-    create_response = api_client.post(f'{api_base_url}/api/users', json=user_data)
-    user_id = create_response.json()['id']
-    
-    # Get user
-    response = api_client.get(f'{api_base_url}/api/users/{user_id}')
-    
-    assert response.status_code == 200
-    assert response.json()['id'] == user_id
-
-def test_authentication(api_client, api_base_url):
-    """Test API authentication"""
-    response = api_client.post(f'{api_base_url}/auth/login', json={
-        'username': 'admin',
-        'password': 'admin123'
+@pytest.fixture
+def authenticated_client(api_client, api_base_url):
+    response = api_client.post(f"{api_base_url}/auth/login", json={
+        "username": "admin",
+        "password": "admin123"
     })
-    
-    assert response.status_code == 200
-    assert 'token' in response.json()
+    token = response.json().get("token")
+    api_client.headers.update({"Authorization": f"Bearer {token}"})
+    return api_client
 ```
 
----
+### Flask Test Client Fixtures
 
-### GraphQL API Testing (Any Language)
+```python
+import pytest
 
-Test GraphQL APIs written in any language (Python Strawberry, JavaScript Apollo, Java GraphQL-Java, etc.).
+@pytest.fixture
+def flask_app():
+    from app.sample_api import create_app
+    app = create_app()
+    app.config["TESTING"] = True
+    return app
+
+@pytest.fixture
+def flask_client(flask_app):
+    with flask_app.test_client() as client:
+        yield client
+```
+
+### CLI Application Fixtures
+
+```python
+import pytest
+import subprocess
+import os
+
+@pytest.fixture
+def cli_runner():
+    def _run_command(args, input_text=None):
+        result = subprocess.run(
+            args,
+            capture_output=True,
+            text=True,
+            input=input_text
+        )
+        return result
+    return _run_command
+
+@pytest.fixture
+def cli_executable():
+    return "./myapp"
+```
+
+### GraphQL Fixtures
 
 ```python
 import pytest
 import requests
-import uuid
+
+@pytest.fixture
+def graphql_url():
+    return "http://localhost:4000/graphql"
 
 @pytest.fixture
 def graphql_client():
-    """GraphQL client"""
-    return requests.Session()
+    session = requests.Session()
+    session.headers.update({"Content-Type": "application/json"})
+    yield session
+    session.close()
 
-def test_graphql_query(graphql_client):
-    """Test GraphQL query"""
+@pytest.fixture
+def graphql_query():
+    def _execute_query(client, url, query, variables=None):
+        payload = {"query": query}
+        if variables:
+            payload["variables"] = variables
+        return client.post(url, json=payload)
+    return _execute_query
+```
+
+### gRPC Fixtures
+
+```python
+import pytest
+import grpc
+
+@pytest.fixture
+def grpc_channel():
+    channel = grpc.insecure_channel("localhost:50051")
+    yield channel
+    channel.close()
+
+@pytest.fixture
+def grpc_stub(grpc_channel):
+    from generated import service_pb2_grpc
+    return service_pb2_grpc.MyServiceStub(grpc_channel)
+```
+
+### WebSocket Fixtures
+
+```python
+import pytest
+import websocket
+import json
+
+@pytest.fixture
+def ws_url():
+    return "ws://localhost:8080/ws"
+
+@pytest.fixture
+def ws_connection(ws_url):
+    ws = websocket.create_connection(ws_url)
+    yield ws
+    ws.close()
+
+@pytest.fixture
+def ws_send_receive():
+    def _send_receive(ws, message):
+        ws.send(json.dumps(message))
+        return json.loads(ws.recv())
+    return _send_receive
+```
+
+### Database Fixtures
+
+```python
+import pytest
+
+@pytest.fixture
+def db_connection():
+    import psycopg2
+    conn = psycopg2.connect("dbname=test user=test password=test")
+    conn.autocommit = False
+    yield conn
+    conn.rollback()
+    conn.close()
+
+@pytest.fixture
+def db_cursor(db_connection):
+    cursor = db_connection.cursor()
+    yield cursor
+    cursor.close()
+
+@pytest.fixture
+def mongodb_client():
+    from pymongo import MongoClient
+    client = MongoClient("mongodb://localhost:27017")
+    yield client
+    client.close()
+
+@pytest.fixture
+def mongodb_collection(mongodb_client, unique_id):
+    db = mongodb_client["test_db"]
+    collection = db[f"test_collection_{unique_id}"]
+    yield collection
+    collection.drop()
+```
+
+### Message Queue Fixtures
+
+```python
+import pytest
+import pika
+import json
+
+@pytest.fixture
+def rabbitmq_channel():
+    connection = pika.BlockingConnection(pika.ConnectionParameters("localhost"))
+    channel = connection.channel()
+    yield channel
+    connection.close()
+
+@pytest.fixture
+def test_queue(rabbitmq_channel, unique_id):
+    queue_name = f"test_queue_{unique_id}"
+    rabbitmq_channel.queue_declare(queue=queue_name, auto_delete=True)
+    yield queue_name
+```
+
+---
+
+## Parametrized Fixtures
+
+```python
+import pytest
+
+@pytest.fixture(params=["admin", "user", "guest"])
+def user_role(request):
+    return request.param
+
+@pytest.fixture(params=[200, 201, 204])
+def success_status_code(request):
+    return request.param
+
+@pytest.fixture(params=[
+    {"username": "valid_user", "expected": 201},
+    {"username": "", "expected": 400},
+    {"username": "a" * 256, "expected": 400}
+])
+def username_test_case(request):
+    return request.param
+```
+
+---
+
+## Helper Functions
+
+```python
+import uuid
+import time
+
+def generate_unique_id():
+    return uuid.uuid4().hex[:8]
+
+def generate_unique_email():
+    return f"user_{generate_unique_id()}@example.com"
+
+def generate_unique_username():
+    return f"user_{generate_unique_id()}"
+
+def wait_for_condition(condition_func, timeout=10, interval=0.5):
+    start_time = time.time()
+    while time.time() - start_time < timeout:
+        if condition_func():
+            return True
+        time.sleep(interval)
+    return False
+
+def retry_request(func, max_attempts=3, delay=1):
+    for attempt in range(max_attempts):
+        try:
+            return func()
+        except Exception:
+            if attempt == max_attempts - 1:
+                raise
+            time.sleep(delay)
+```
+
+---
+
+# Part 2: Test Best Practices
+
+## Test Structure and Naming
+
+```python
+def test_create_user_with_valid_data_returns_201(api_client, api_base_url, test_user_data):
+    response = api_client.post(f"{api_base_url}/api/users", json=test_user_data)
+    
+    assert response.status_code == 201
+
+def test_get_nonexistent_user_returns_404(api_client, api_base_url):
+    response = api_client.get(f"{api_base_url}/api/users/99999")
+    
+    assert response.status_code == 404
+
+def test_delete_user_removes_resource(api_client, api_base_url, created_resource):
+    response = api_client.delete(f"{api_base_url}/api/users/{created_resource}")
+    
+    assert response.status_code == 200
+    
+    get_response = api_client.get(f"{api_base_url}/api/users/{created_resource}")
+    assert get_response.status_code == 404
+```
+
+---
+
+## Assertion Patterns
+
+### Status Code Assertions
+
+```python
+def test_successful_creation(api_client, api_base_url, test_user_data):
+    response = api_client.post(f"{api_base_url}/api/users", json=test_user_data)
+    
+    assert response.status_code == 201, f"Expected 201, got {response.status_code}: {response.text}"
+
+def test_unauthorized_access(api_client, api_base_url):
+    response = api_client.get(f"{api_base_url}/api/protected")
+    
+    assert response.status_code == 401, f"Expected 401, got {response.status_code}"
+```
+
+### Response Body Assertions
+
+```python
+def test_user_response_contains_required_fields(api_client, api_base_url, created_resource):
+    response = api_client.get(f"{api_base_url}/api/users/{created_resource}")
+    data = response.json()
+    
+    assert "id" in data, "Response missing 'id' field"
+    assert "username" in data, "Response missing 'username' field"
+    assert "email" in data, "Response missing 'email' field"
+    assert "password" not in data, "Response should not expose password"
+
+def test_list_users_returns_array(api_client, api_base_url):
+    response = api_client.get(f"{api_base_url}/api/users")
+    data = response.json()
+    
+    assert isinstance(data, list), f"Expected list, got {type(data)}"
+```
+
+### Value Assertions
+
+```python
+def test_created_user_matches_input(api_client, api_base_url, test_user_data):
+    response = api_client.post(f"{api_base_url}/api/users", json=test_user_data)
+    data = response.json()
+    
+    assert data["username"] == test_user_data["username"], "Username mismatch"
+    assert data["email"] == test_user_data["email"], "Email mismatch"
+```
+
+---
+
+## Test Isolation
+
+```python
+def test_user_creation_is_isolated(api_client, api_base_url, unique_id):
+    user_data = {
+        "username": f"user_{unique_id}",
+        "email": f"user_{unique_id}@example.com",
+        "password": "password123"
+    }
+    
+    response = api_client.post(f"{api_base_url}/api/users", json=user_data)
+    
+    assert response.status_code == 201
+
+def test_another_user_creation_is_isolated(api_client, api_base_url, unique_id):
+    user_data = {
+        "username": f"user_{unique_id}",
+        "email": f"user_{unique_id}@example.com",
+        "password": "password123"
+    }
+    
+    response = api_client.post(f"{api_base_url}/api/users", json=user_data)
+    
+    assert response.status_code == 201
+```
+
+---
+
+## Using Fixtures Effectively
+
+```python
+def test_with_factory_fixture(api_client, api_base_url, user_data_factory):
+    user1 = user_data_factory()
+    user2 = user_data_factory(password="different_password")
+    
+    response1 = api_client.post(f"{api_base_url}/api/users", json=user1)
+    response2 = api_client.post(f"{api_base_url}/api/users", json=user2)
+    
+    assert response1.status_code == 201
+    assert response2.status_code == 201
+    assert response1.json()["id"] != response2.json()["id"]
+
+def test_with_authenticated_client(authenticated_client, api_base_url):
+    response = authenticated_client.get(f"{api_base_url}/api/protected")
+    
+    assert response.status_code == 200
+
+def test_database_rollback(db_cursor, unique_id):
+    db_cursor.execute(
+        "INSERT INTO users (username, email) VALUES (%s, %s)",
+        (f"user_{unique_id}", f"user_{unique_id}@example.com")
+    )
+    
+    db_cursor.execute("SELECT COUNT(*) FROM users WHERE username = %s", (f"user_{unique_id}",))
+    count = db_cursor.fetchone()[0]
+    
+    assert count == 1
+```
+
+---
+
+## Edge Case and Error Handling Tests
+
+### Input Validation
+
+```python
+def test_empty_username_returns_400(api_client, api_base_url, unique_id):
+    user_data = {
+        "username": "",
+        "email": f"user_{unique_id}@example.com",
+        "password": "password123"
+    }
+    
+    response = api_client.post(f"{api_base_url}/api/users", json=user_data)
+    
+    assert response.status_code == 400
+
+def test_invalid_email_format_returns_400(api_client, api_base_url, unique_id):
+    user_data = {
+        "username": f"user_{unique_id}",
+        "email": "not-an-email",
+        "password": "password123"
+    }
+    
+    response = api_client.post(f"{api_base_url}/api/users", json=user_data)
+    
+    assert response.status_code == 400
+
+def test_missing_required_field_returns_400(api_client, api_base_url, unique_id):
+    user_data = {
+        "username": f"user_{unique_id}"
+    }
+    
+    response = api_client.post(f"{api_base_url}/api/users", json=user_data)
+    
+    assert response.status_code == 400
+```
+
+### Boundary Conditions
+
+```python
+def test_username_at_max_length(api_client, api_base_url, unique_id):
+    user_data = {
+        "username": "a" * 50,
+        "email": f"user_{unique_id}@example.com",
+        "password": "password123"
+    }
+    
+    response = api_client.post(f"{api_base_url}/api/users", json=user_data)
+    
+    assert response.status_code in [201, 400]
+
+def test_username_exceeds_max_length(api_client, api_base_url, unique_id):
+    user_data = {
+        "username": "a" * 256,
+        "email": f"user_{unique_id}@example.com",
+        "password": "password123"
+    }
+    
+    response = api_client.post(f"{api_base_url}/api/users", json=user_data)
+    
+    assert response.status_code == 400
+```
+
+### Error Response Validation
+
+```python
+def test_error_response_contains_message(api_client, api_base_url):
+    response = api_client.get(f"{api_base_url}/api/users/invalid-id")
+    
+    assert response.status_code >= 400
+    data = response.json()
+    assert "error" in data or "message" in data
+
+def test_duplicate_username_returns_conflict(api_client, api_base_url, test_user_data):
+    api_client.post(f"{api_base_url}/api/users", json=test_user_data)
+    
+    response = api_client.post(f"{api_base_url}/api/users", json=test_user_data)
+    
+    assert response.status_code == 409
+```
+
+---
+
+## CLI Application Tests
+
+```python
+def test_cli_help_displays_usage(cli_runner, cli_executable):
+    result = cli_runner([cli_executable, "--help"])
+    
+    assert result.returncode == 0
+    assert "usage" in result.stdout.lower() or "Usage" in result.stdout
+
+def test_cli_version_displays_version(cli_runner, cli_executable):
+    result = cli_runner([cli_executable, "--version"])
+    
+    assert result.returncode == 0
+
+def test_cli_invalid_command_returns_error(cli_runner, cli_executable):
+    result = cli_runner([cli_executable, "nonexistent-command"])
+    
+    assert result.returncode != 0
+```
+
+---
+
+## GraphQL Tests
+
+```python
+def test_graphql_query_returns_data(graphql_client, graphql_url, graphql_query):
     query = """
-    query GetUser($id: ID!) {
-        user(id: $id) {
+    query {
+        users {
             id
             username
-            email
         }
     }
     """
     
-    response = graphql_client.post('http://localhost:4000/graphql', json={
-        'query': query,
-        'variables': {'id': '1'}
-    })
-    
-    assert response.status_code == 200
+    response = graphql_query(graphql_client, graphql_url, query)
     data = response.json()
-    assert 'data' in data
-    assert 'user' in data['data']
+    
+    assert "data" in data
+    assert "errors" not in data
 
-def test_graphql_mutation(graphql_client):
-    """Test GraphQL mutation"""
-    unique_id = uuid.uuid4().hex[:8]
+def test_graphql_mutation_creates_resource(graphql_client, graphql_url, graphql_query, unique_id):
     mutation = """
     mutation CreateUser($username: String!, $email: String!) {
         createUser(username: $username, email: $email) {
@@ -225,360 +650,82 @@ def test_graphql_mutation(graphql_client):
         }
     }
     """
+    variables = {
+        "username": f"user_{unique_id}",
+        "email": f"user_{unique_id}@example.com"
+    }
     
-    response = graphql_client.post('http://localhost:4000/graphql', json={
-        'query': mutation,
-        'variables': {
-            'username': f'user_{unique_id}',
-            'email': f'user_{unique_id}@example.com'
-        }
-    })
-    
-    assert response.status_code == 200
+    response = graphql_query(graphql_client, graphql_url, mutation, variables)
     data = response.json()
-    assert 'data' in data
-    assert 'createUser' in data['data']
+    
+    assert "data" in data
+    assert data["data"]["createUser"]["username"] == f"user_{unique_id}"
 ```
 
 ---
 
-### CLI Application Testing (Any Language)
-
-Test command-line applications written in any language (Python Click, Go Cobra, Rust Clap, etc.).
+## WebSocket Tests
 
 ```python
-import pytest
-import subprocess
-import uuid
-import tempfile
-import os
-
-def test_cli_help_command():
-    """Test CLI help output"""
-    result = subprocess.run(['./myapp', '--help'], capture_output=True, text=True)
-    
-    assert result.returncode == 0
-    assert 'Usage:' in result.stdout
-    assert '--help' in result.stdout
-
-def test_cli_create_user():
-    """Test CLI user creation"""
-    unique_id = uuid.uuid4().hex[:8]
-    username = f'user_{unique_id}'
-    
-    result = subprocess.run(
-        ['./myapp', 'user', 'create', '--username', username, '--email', f'{username}@example.com'],
-        capture_output=True,
-        text=True
-    )
-    
-    assert result.returncode == 0
-    assert 'User created successfully' in result.stdout
-    assert username in result.stdout
-
-def test_cli_file_processing():
-    """Test CLI file processing"""
-    unique_id = uuid.uuid4().hex[:8]
-    
-    # Create temp input file
-    with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.txt') as f:
-        input_file = f.name
-        f.write('test data')
-    
-    output_file = f'/tmp/output_{unique_id}.txt'
-    
-    try:
-        result = subprocess.run(
-            ['./myapp', 'process', '--input', input_file, '--output', output_file],
-            capture_output=True,
-            text=True
-        )
-        
-        assert result.returncode == 0
-        assert os.path.exists(output_file)
-    finally:
-        # Cleanup
-        os.unlink(input_file)
-        if os.path.exists(output_file):
-            os.unlink(output_file)
-```
-
----
-
-### gRPC Service Testing (Any Language)
-
-Test gRPC services written in any language (Python, Go, Java, C++, etc.).
-
-```python
-import pytest
-import grpc
-import uuid
-from generated import user_service_pb2, user_service_pb2_grpc
-
-@pytest.fixture
-def grpc_channel():
-    """gRPC channel"""
-    channel = grpc.insecure_channel('localhost:50051')
-    yield channel
-    channel.close()
-
-@pytest.fixture
-def user_stub(grpc_channel):
-    """User service stub"""
-    return user_service_pb2_grpc.UserServiceStub(grpc_channel)
-
-def test_create_user_grpc(user_stub):
-    """Test gRPC user creation"""
-    unique_id = uuid.uuid4().hex[:8]
-    
-    request = user_service_pb2.CreateUserRequest(
-        username=f'user_{unique_id}',
-        email=f'user_{unique_id}@example.com'
-    )
-    
-    response = user_stub.CreateUser(request)
-    
-    assert response.id > 0
-    assert response.username == f'user_{unique_id}'
-
-def test_get_user_grpc(user_stub):
-    """Test gRPC get user"""
-    request = user_service_pb2.GetUserRequest(id=1)
-    response = user_stub.GetUser(request)
-    
-    assert response.id == 1
-    assert response.username != ''
-```
-
----
-
-### WebSocket Server Testing (Any Language)
-
-Test WebSocket servers written in any language (Python, Node.js, Go, etc.).
-
-```python
-import pytest
-import websocket
-import json
-import uuid
-
-@pytest.fixture
-def ws_connection():
-    """WebSocket connection"""
-    ws = websocket.create_connection('ws://localhost:8080/ws')
-    yield ws
-    ws.close()
-
-def test_websocket_connection(ws_connection):
-    """Test WebSocket connection"""
+def test_websocket_connection_established(ws_connection):
     assert ws_connection.connected
 
-def test_websocket_message_exchange(ws_connection):
-    """Test sending and receiving messages"""
-    unique_id = uuid.uuid4().hex[:8]
-    message = {'type': 'create_user', 'username': f'user_{unique_id}'}
+def test_websocket_message_exchange(ws_connection, ws_send_receive, unique_id):
+    message = {"type": "ping", "id": unique_id}
     
-    ws_connection.send(json.dumps(message))
-    response = json.loads(ws_connection.recv())
+    response = ws_send_receive(ws_connection, message)
     
-    assert response['status'] == 'success'
-    assert 'user_id' in response
-
-def test_websocket_broadcast():
-    """Test WebSocket broadcast"""
-    ws1 = websocket.create_connection('ws://localhost:8080/ws')
-    ws2 = websocket.create_connection('ws://localhost:8080/ws')
-    
-    try:
-        # Send from ws1
-        ws1.send(json.dumps({'type': 'broadcast', 'message': 'Hello'}))
-        
-        # Receive on ws2
-        response = json.loads(ws2.recv())
-        assert response['message'] == 'Hello'
-    finally:
-        ws1.close()
-        ws2.close()
+    assert response["type"] == "pong"
 ```
-
----
-
-### Database Operations Testing (Any Database)
-
-Test database operations for any database (PostgreSQL, MySQL, MongoDB, etc.).
-
-```python
-import pytest
-import psycopg2
-import uuid
-
-@pytest.fixture
-def db_connection():
-    """Database connection with transaction rollback"""
-    conn = psycopg2.connect("dbname=test user=test password=test")
-    conn.autocommit = False
-    yield conn
-    conn.rollback()  # Rollback all changes after test
-    conn.close()
-
-def test_insert_user(db_connection):
-    """Test inserting user into database"""
-    unique_id = uuid.uuid4().hex[:8]
-    cursor = db_connection.cursor()
-    
-    cursor.execute(
-        "INSERT INTO users (username, email) VALUES (%s, %s) RETURNING id",
-        (f'user_{unique_id}', f'user_{unique_id}@example.com')
-    )
-    
-    user_id = cursor.fetchone()[0]
-    assert user_id is not None
-
-def test_query_user(db_connection):
-    """Test querying user from database"""
-    cursor = db_connection.cursor()
-    cursor.execute("SELECT * FROM users WHERE id = %s", (1,))
-    
-    user = cursor.fetchone()
-    assert user is not None
-```
-
----
-
-### Message Queue Testing (Any Language)
-
-Test message queue producers/consumers written in any language (Python Celery, RabbitMQ, Kafka, etc.).
-
-```python
-import pytest
-import pika
-import json
-import uuid
-import time
-
-@pytest.fixture
-def rabbitmq_connection():
-    """RabbitMQ connection"""
-    connection = pika.BlockingConnection(pika.ConnectionParameters('localhost'))
-    channel = connection.channel()
-    yield channel
-    connection.close()
-
-def test_publish_message(rabbitmq_connection):
-    """Test publishing message to queue"""
-    unique_id = uuid.uuid4().hex[:8]
-    queue_name = f'test_queue_{unique_id}'
-    
-    rabbitmq_connection.queue_declare(queue=queue_name, auto_delete=True)
-    
-    message = {'user_id': unique_id, 'action': 'create'}
-    rabbitmq_connection.basic_publish(
-        exchange='',
-        routing_key=queue_name,
-        body=json.dumps(message)
-    )
-    
-    # Verify message was published
-    method, properties, body = rabbitmq_connection.basic_get(queue=queue_name)
-    assert body is not None
-    assert json.loads(body)['user_id'] == unique_id
-
-def test_consume_message(rabbitmq_connection):
-    """Test consuming message from queue"""
-    unique_id = uuid.uuid4().hex[:8]
-    queue_name = f'test_queue_{unique_id}'
-    
-    rabbitmq_connection.queue_declare(queue=queue_name, auto_delete=True)
-    
-    # Publish message
-    message = {'task': 'process_user', 'user_id': unique_id}
-    rabbitmq_connection.basic_publish(
-        exchange='',
-        routing_key=queue_name,
-        body=json.dumps(message)
-    )
-    
-    # Consume message
-    method, properties, body = rabbitmq_connection.basic_get(queue=queue_name, auto_ack=True)
-    
-    assert method is not None
-    consumed_message = json.loads(body)
-    assert consumed_message['user_id'] == unique_id
-```
-
----
-
-### Microservices Testing (Any Language)
-
-Test microservices written in any language with service-to-service communication.
-
-```python
-import pytest
-import requests
-import uuid
-from unittest.mock import patch, MagicMock
-
-@pytest.fixture
-def service_a_url():
-    return "http://localhost:8001"
-
-@pytest.fixture
-def service_b_url():
-    return "http://localhost:8002"
-
-def test_service_integration(service_a_url, service_b_url):
-    """Test integration between two services"""
-    unique_id = uuid.uuid4().hex[:8]
-    
-    # Call service A
-    response_a = requests.post(f'{service_a_url}/api/users', json={
-        'username': f'user_{unique_id}',
-        'email': f'user_{unique_id}@example.com'
-    })
-    
-    assert response_a.status_code == 201
-    user_id = response_a.json()['id']
-    
-    # Verify service B received the event
-    response_b = requests.get(f'{service_b_url}/api/user-events/{user_id}')
-    assert response_b.status_code == 200
-
-@patch('requests.post')
-def test_service_with_mock(mock_post):
-    """Test service with mocked dependencies"""
-    mock_post.return_value = MagicMock(
-        status_code=200,
-        json=lambda: {'id': '123', 'status': 'success'}
-    )
-    
-    # Test your service that calls external API
-    result = my_service_function()
-    
-    assert result['status'] == 'success'
-    mock_post.assert_called_once()
-```
-
----
-
-## Key Takeaways
-
-1. **Always use unique identifiers** (`uuid.uuid4().hex[:8]`) for test data
-2. **Use pytest fixtures** for setup, teardown, and shared resources
-3. **Be specific in assertions** with helpful error messages
-4. **Clean up resources** after tests (files, DB records, connections)
-5. **Tests must be independent** - no execution order dependencies
-6. **Use appropriate client libraries** (requests for HTTP, subprocess for CLI, grpc for gRPC, etc.)
-7. **Mock external dependencies** when testing microservices
-8. **Rollback database transactions** to avoid test data pollution
 
 ---
 
 ## Anti-Patterns to Avoid
 
-❌ Hardcoded test data shared across tests
-❌ Tests that depend on other tests running first
-❌ Vague assertions without context
-❌ Not cleaning up test resources
-❌ Assuming empty/clean state
-❌ Testing multiple unrelated things in one test
-❌ Using production data or credentials in tests
+### Hardcoded Test Data
+
+```python
+def test_wrong_hardcoded_data(api_client, api_base_url):
+    user_data = {
+        "username": "testuser",
+        "email": "test@example.com"
+    }
+    response = api_client.post(f"{api_base_url}/api/users", json=user_data)
+```
+
+### Missing Assertion Messages
+
+```python
+def test_wrong_no_message(api_client, api_base_url):
+    response = api_client.get(f"{api_base_url}/api/users")
+    assert response.status_code == 200
+    assert response.json()
+```
+
+### Test Dependencies
+
+```python
+created_user_id = None
+
+def test_wrong_create_user(api_client, api_base_url):
+    global created_user_id
+    response = api_client.post(f"{api_base_url}/api/users", json={"username": "test"})
+    created_user_id = response.json()["id"]
+
+def test_wrong_get_user(api_client, api_base_url):
+    response = api_client.get(f"{api_base_url}/api/users/{created_user_id}")
+    assert response.status_code == 200
+```
+
+---
+
+## Key Principles Summary
+
+1. Always use unique identifiers for test data
+2. Use fixtures for setup, teardown, and shared resources
+3. Clean up resources after tests using yield fixtures
+4. Be specific in assertions with helpful error messages
+5. Tests must be independent with no execution order dependencies
+6. Use appropriate client libraries for the application type
+7. Rollback database transactions to avoid test data pollution
+8. Never use production data or credentials in tests

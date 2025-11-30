@@ -25,12 +25,13 @@ The `run_full_workflow.sh` script automates the entire pipeline:
 1. **Checks Prerequisites** - Python 3, OpenAI API key, dependencies
 2. **Starts Sample API** - Launches Flask app on port 5000
 3. **Step 1: Analyze Code** - Scans app/ and app/documentation/
-4. **Step 2: Generate Tests** - Creates pytest files from analysis
-5. **Step 3: Execute Tests** - Runs all tests with HTML/JSON reports
-6. **Step 4: Iterative Self-Healing** - Heals and reruns failing tests (max 3 attempts)
-7. **Step 5: Check Commit Conditions** - Determines if commit should be allowed
-8. **Step 6: Generate Reports** - Creates summary and BUGS.md (always runs, even if commit blocked)
-9. **Cleanup** - Stops API server
+4. **Step 2: Generate Fixtures** - Creates reusable fixtures in tests/conftest.py
+5. **Step 3: Generate Tests** - Creates pytest files from analysis using fixtures
+6. **Step 4: Execute Tests** - Runs all tests with HTML/JSON reports
+7. **Step 5: Iterative Self-Healing** - Heals and reruns failing tests (max 3 attempts)
+8. **Step 6: Check Commit Conditions** - Determines if commit should be allowed
+9. **Step 7: Generate Reports** - Creates summary and BUGS.md (always runs, even if commit blocked)
+10. **Cleanup** - Stops API server
 
 **Exit Behavior:**
 - Always generates reports (Step 6), even when commit is blocked
@@ -59,25 +60,37 @@ The `run_full_workflow.sh` script automates the entire pipeline:
                             │
                             ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                   2. TEST GENERATION                            │
+│                   2. FIXTURE GENERATION                         │
+│  ┌──────────────────┐  Generate       ┌───────────────────┐    │
+│  │ analysis.md      │  Fixtures       │ tests/            │    │
+│  │ best_practices.md│ ─────────────>  │ conftest.py       │    │
+│  └──────────────────┘   GPT-4o-mini   │ (Reusable         │    │
+│                                       │  Fixtures)        │    │
+│                                       └───────────────────┘    │
+└─────────────────────────────────────────────────────────────────┘
+                            │
+                            ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                   3. TEST GENERATION                            │
 │  ┌──────────────────┐  Generate Tests  ┌───────────────┐       │
 │  │ analysis.md      │ ──────────────>   │ tests/        │       │
-│  │ (scenarios)      │   GPT-4o-mini     │ generated/    │       │
+│  │ conftest.py      │   GPT-4o-mini     │ generated/    │       │
 │  └──────────────────┘                   └───────────────┘       │
 └─────────────────────────────────────────────────────────────────┘
                             │
                             ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                   3. TEST EXECUTION                             │
+│                   4. TEST EXECUTION                             │
 │  ┌───────────────┐      pytest        ┌──────────────┐         │
 │  │ tests/        │ ─────────────────>  │ reports/     │         │
 │  │ generated/    │                     │ HTML + JSON  │         │
+│  │ conftest.py   │                     │              │         │
 │  └───────────────┘                     └──────────────┘         │
 └─────────────────────────────────────────────────────────────────┘
                             │
                             ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                   4. SELF-HEALING                               │
+│                   5. SELF-HEALING                               │
 │  ┌──────────────┐  AI Classification  ┌──────────────────┐     │
 │  │ Failures     │ ─────────────────>   │ Test Error  │    │     │
 │  │ (JSON)       │   GPT-4o-mini        │ vs          │    │     │
@@ -94,7 +107,7 @@ The `run_full_workflow.sh` script automates the entire pipeline:
                             │
                             ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                   5. AI SUMMARY                                 │
+│                   6. AI SUMMARY                                 │
 │  ┌──────────────┐  Comprehensive    ┌───────────────────────┐  │
 │  │ Test Results │  Analysis         │ summary_YYYY-MM-DD... │  │
 │  │ + Healing    │ ──────────────>   │ .md                   │  │
@@ -149,24 +162,45 @@ The `run_full_workflow.sh` script automates the entire pipeline:
   - Performance Tests (when applicable)
   - Security Tests (when applicable)
 
-### 2. Test Generator (`src/ai_engine/test_generator.py`)
+### 2. Fixture Generator (`src/ai_engine/fixture_generator.py`)
+
+**Purpose**: Generates reusable pytest fixtures before test generation.
+
+**Process**:
+- Reads `reports/analysis.md` to detect application type and technologies
+- Reads `test_templates/test_best_practices.md` for fixture patterns
+- Uses GPT-4o-mini to generate appropriate fixtures based on:
+  - Detected API endpoints → API client fixtures
+  - Database models → database fixtures with rollback
+  - Authentication → auth token fixtures
+  - Application type (REST, CLI, GraphQL, gRPC, WebSocket)
+
+**Output**: `tests/conftest.py` with:
+- Unique identifier generators (unique_id, unique_email, unique_username)
+- Test data factories (user_data_factory, test_user_data)
+- API client fixtures (api_client, api_base_url, authenticated_client)
+- Database fixtures with cleanup (db_connection, db_cursor)
+- Application-specific fixtures based on analysis
+
+### 3. Test Generator (`src/ai_engine/test_generator.py`)
 - Reads `reports/analysis.md`
+- Reads `tests/conftest.py` for available fixtures
 - Extracts test scenarios from categorized sections:
   - **Functional Tests**: Business logic, CRUD operations, validation
   - **Performance Tests**: Load, stress, concurrency testing
   - **Security Tests**: Auth, injection prevention, access control
 - Prefixes scenarios with category tags: `[Functional]`, `[Performance]`, `[Security]`
-- For each scenario, generates pytest code via GPT-4o-mini
+- For each scenario, generates pytest code via GPT-4o-mini using conftest fixtures
 - Saves to `tests/generated/test_scenario_X.py`
 
-**Output**: Multiple pytest files with categorized tests
+**Output**: Multiple pytest files that use fixtures from conftest.py
 
-### 3. Test Executor (pytest)
+### 4. Test Executor (pytest)
 - Runs all generated tests
 - Generates HTML report (`reports/html/report.html`)
 - Generates JSON report (`reports/pytest-report.json`)
 
-### 4. Iterative Self-Healer (`src/ai_engine/self_healer.py`)
+### 5. Iterative Self-Healer (`src/ai_engine/self_healer.py`)
 Performs iterative healing with automatic reruns:
 
 **Process**:
@@ -189,7 +223,7 @@ Performs iterative healing with automatic reruns:
   - max_attempts_exceeded (tests still failing)
   - commit_allowed (true/false)
 
-### 5. Report Summarizer & Bug Reporter
+### 6. Report Summarizer & Bug Reporter
 **Report Summarizer** (`src/ai_engine/report_summarizer.py`):
 - Reads test results + healing analysis
 - Generates comprehensive markdown summary via GPT-4o-mini
@@ -223,15 +257,16 @@ The workflow runs all steps automatically with iterative healing:
 ```yaml
 1. Checkout & Setup
 2. Analyze Code → reports/analysis.md
-3. Generate Tests → tests/generated/
-4. Execute Tests (Initial) → reports/html/, reports/*.json
-5. Iterative Self-Heal → Heal, rerun, re-classify (max 3 attempts/test)
-6. Check Commit Conditions → Allow or block based on healing results
-7. Generate Summary & BUGS.md → reports/summaries/, reports/BUGS.md
-8. Upload Artifacts (all reports)
-9. Commit Changes (only if allowed)
-   - Commits healed tests if all TEST_ERROR tests passed
-   - Blocks commit if any tests exceeded max attempts
+3. Generate Fixtures → tests/conftest.py
+4. Generate Tests → tests/generated/
+5. Execute Tests (Initial) → reports/html/, reports/*.json
+6. Iterative Self-Heal → Heal, rerun, re-classify (max 3 attempts/test)
+7. Check Commit Conditions → Allow or block based on healing results
+8. Generate Summary & BUGS.md → reports/summaries/, reports/BUGS.md
+9. Upload Artifacts (all reports)
+10. Commit Changes (only if allowed)
+    - Commits healed tests if all TEST_ERROR tests passed
+    - Blocks commit if any tests exceeded max attempts
 ```
 
 ## File Flow
@@ -244,13 +279,17 @@ Input:
     ├── package.json, Cargo.toml, etc (Config files)
     └── documentation/        (Markdown, text docs)
         └── sample_api_docs.md
+  test_templates/
+    └── test_best_practices.md (Fixture and test patterns)
 
 Automation:
   run_full_workflow.sh        (One-command automation)
+  cleanup_workflow.sh         (Clean all workflow output)
 
 Processing:
   reports/analysis.md         (AI-generated analysis with categorized scenarios)
-  tests/generated/*.py        (AI-generated categorized tests)
+  tests/conftest.py           (AI-generated reusable fixtures)
+  tests/generated/*.py        (AI-generated categorized tests using fixtures)
   reports/pytest-report.json  (Test results)
   reports/healing_analysis.json (Self-healing results)
 
@@ -258,6 +297,7 @@ Output:
   reports/html/report.html    (Test execution report)
   reports/BUGS.md             (Detailed bug analysis - when defects found)
   reports/summaries/summary_*.md (AI summary - always generated)
+  tests/conftest.py           (Reusable fixtures)
   tests/generated/*.py        (Healed tests)
 ```
 
@@ -270,6 +310,17 @@ export OPENAI_API_KEY='your-key'
 ./run_full_workflow.sh
 ```
 
+### Cleanup Workflow Output
+```bash
+./cleanup_workflow.sh
+```
+
+This removes all generated files:
+- `reports/` - analysis, HTML reports, JSON reports, summaries, BUGS.md
+- `tests/generated/` - all generated test files
+- `tests/conftest.py` - generated fixtures
+- `logs/workflow.log` - workflow execution log
+
 ### Manual Step-by-Step Execution
 ```bash
 cd /Users/maciejklimkowicz/Documents/Projects/AI_Test_Automation
@@ -280,6 +331,7 @@ python app/sample_api.py &
 
 # Run workflow steps
 python src/ai_engine/analyzer.py
+python src/ai_engine/fixture_generator.py
 python src/ai_engine/test_generator.py
 pytest
 python src/ai_engine/self_healer.py

@@ -154,12 +154,6 @@ def create_app():
 
     @app.route('/api/auth/login', methods=['POST'])
     def login():
-        """
-        Login endpoint - CONTAINS INTENTIONAL BUG
-        
-        BUG: Always returns 401 even for valid credentials
-        Expected: Should return 200 with token for valid credentials
-        """
         data = request.get_json()
         
         if not data or 'username' not in data or 'password' not in data:
@@ -169,7 +163,6 @@ def create_app():
         password = data['password']
         password_hash = hashlib.sha256(password.encode()).hexdigest()
         
-        # Find user by username
         user = None
         for u in users.values():
             if u['username'] == username:
@@ -179,13 +172,9 @@ def create_app():
         if not user:
             return jsonify({"error": "Invalid credentials"}), 401
         
-        # INTENTIONAL BUG: Always return 401 even when password matches
-        # This simulates an application defect for testing
-        # Correct code would be:
-        # if user['password'] == password_hash:
-        #     return jsonify({"token": "fake-jwt-token", "user_id": user['id']}), 200
+        if user['password'] == password_hash:
+            return jsonify({"token": "fake-jwt-token", "user_id": user['id']}), 200
         
-        # BUG: Always returns 401
         return jsonify({"error": "Invalid credentials"}), 401
     
     return app
