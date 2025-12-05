@@ -11,7 +11,7 @@ from typing import Dict, List, Optional, Set, Tuple
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from utils.config import config
 from utils.logger import get_logger
-from utils.openai_client import OpenAIClient
+from utils.ai_client import AIClient
 
 logger = get_logger(__name__)
 
@@ -118,123 +118,9 @@ def _auto_fix_imports(py_path: Path, code: str, missing_modules: List[str]) -> T
     return True, updated_code
 
 
-def validate_conftest(
-    conftest_path: Path,
-    best_practices_path: Optional[Path],
-    allow_autofix: bool = True,
-    max_healing_attempts: int = 3
-) -> ValidationResult:
-    logger.info("Validating conftest.py at %s", conftest_path)
-
-    if not conftest_path.exists():
-        issues = [ValidationIssue(type="missing-file", message=f"{conftest_path} does not exist.")]
-        return ValidationResult(target=str(conftest_path), syntax_ok=False, imports_ok=False, issues=issues)
-
-    client = OpenAIClient()
-    best_practices = (
-        best_practices_path.read_text() if best_practices_path and best_practices_path.exists() else ""
-    )
-
-    healing_attempts = 0
-    autofix_applied = False
-
-    while healing_attempts <= max_healing_attempts:
-        issues: List[ValidationIssue] = []
-        code = conftest_path.read_text()
-
-        syntax_ok, syntax_error = _compile_check(conftest_path)
-        if not syntax_ok:
-            issues.append(ValidationIssue(type="syntax-error", message=syntax_error or "Syntax error"))
-
-        imports = _extract_imports(code)
-        imports_ok, import_issues, missing_modules = _check_imports(imports)
-        issues.extend(import_issues)
-
-        if allow_autofix and not imports_ok and missing_modules:
-            logger.info("Attempting to auto-fix missing imports: %s", ", ".join(missing_modules))
-            applied, updated_code = _auto_fix_imports(conftest_path, code, missing_modules)
-            if applied:
-                autofix_applied = True
-                code = updated_code
-                syntax_ok, syntax_error = _compile_check(conftest_path)
-                if not syntax_ok and syntax_error:
-                    issues.append(ValidationIssue(type="syntax-error", message=syntax_error))
-                imports = _extract_imports(code)
-                imports_ok, import_issues, missing_modules = _check_imports(imports)
-                issues.extend(import_issues)
-
-        ai_passed: Optional[bool] = None
-        if syntax_ok and imports_ok:
-            try:
-                review = client.validate_conftest(code, best_practices)
-                ai_passed = review.get("status") == "pass"
-                for item in review.get("issues", []):
-                    issues.append(
-                        ValidationIssue(
-                            type=item.get("type", "ai-issue"),
-                            message=item.get("detail", "AI detected issue"),
-                            suggestion=item.get("suggestion")
-                        )
-                    )
-            except Exception as exc:
-                logger.warning("AI conftest validation skipped: %s", exc)
-
-        if syntax_ok and imports_ok and (ai_passed in (True, None)):
-            return ValidationResult(
-                target=str(conftest_path),
-                syntax_ok=syntax_ok,
-                imports_ok=imports_ok,
-                ai_passed=ai_passed,
-                issues=issues,
-                autofix_applied=autofix_applied,
-                healing_attempts=healing_attempts,
-            )
-
-        if healing_attempts >= max_healing_attempts:
-            logger.error("Conftest validation failed after %s healing attempts", healing_attempts)
-            return ValidationResult(
-                target=str(conftest_path),
-                syntax_ok=syntax_ok,
-                imports_ok=imports_ok,
-                ai_passed=ai_passed,
-                issues=issues,
-                autofix_applied=autofix_applied,
-                healing_attempts=healing_attempts,
-            )
-
-        healing_attempts += 1
-        logger.info("Attempting AI healing for conftest.py (attempt %s)", healing_attempts)
-        try:
-            heal_payload = [
-                {
-                    "type": issue.type,
-                    "message": issue.message,
-                    "suggestion": issue.suggestion,
-                }
-                for issue in issues
-            ]
-            healed_code = client.heal_conftest(code, heal_payload, best_practices)
-            if healed_code and healed_code.strip():
-                conftest_path.write_text(healed_code if healed_code.endswith("\n") else healed_code + "\n")
-                continue
-        except Exception as exc: 
-            logger.warning("AI healing of conftest failed: %s", exc)
-        break
-
-    return ValidationResult(
-        target=str(conftest_path),
-        syntax_ok=False,
-        imports_ok=False,
-        ai_passed=False,
-        issues=issues,
-        autofix_applied=autofix_applied,
-        healing_attempts=healing_attempts,
-    )
-
-
 def validate_tests(
     tests_dir: Path,
-    conftest_path: Path,
+    conftest_path: Optional[Path] = None,
     allow_autofix: bool = True,
     max_healing_attempts: int = 3
 ) -> ValidationResult:
@@ -245,7 +131,7 @@ def validate_tests(
         issues = [ValidationIssue(type="missing-tests", message=f"No test_*.py files found in {tests_dir}")]
         return ValidationResult(target=str(tests_dir), syntax_ok=False, imports_ok=False, issues=issues)
 
-    client = OpenAIClient()
+    client = AIClient()
     healing_attempts = 0
     autofix_applied = False
 
@@ -277,7 +163,7 @@ def validate_tests(
                         autofix_applied = True
                         file_content[str(test_file)] = updated_code
 
-        conftest_code = conftest_path.read_text() if conftest_path.exists() else ""
+        conftest_code = conftest_path.read_text() if conftest_path and conftest_path.exists() else ""
         ai_passed: Optional[bool] = None
         if syntax_ok and imports_ok:
             try:
@@ -358,17 +244,11 @@ def _write_report(result: ValidationResult, report_path: Path) -> None:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Validate generated pytest assets")
+    parser = argparse.ArgumentParser(description="Validate generated pytest tests")
     subparsers = parser.add_subparsers(dest="command", required=True)
-
-    conftest_parser = subparsers.add_parser("conftest", help="Validate conftest.py")
-    conftest_parser.add_argument("--conftest-path", default="tests/conftest.py", help="Path to conftest.py")
-    conftest_parser.add_argument("--best-practices-path", default="test_templates/test_best_practices.md")
-    conftest_parser.add_argument("--report", default="reports/validation_conftest.json")
 
     tests_parser = subparsers.add_parser("tests", help="Validate generated tests")
     tests_parser.add_argument("--tests-dir", default="tests/generated", help="Directory containing generated tests")
-    tests_parser.add_argument("--conftest-path", default="tests/conftest.py")
     tests_parser.add_argument("--report", default="reports/validation_tests.json")
 
     args = parser.parse_args()
@@ -377,18 +257,8 @@ def main() -> int:
     if str(project_root) not in sys.path:
         sys.path.insert(0, str(project_root))
 
-    if args.command == "conftest":
-        result = validate_conftest(
-            project_root / args.conftest_path,
-            project_root / args.best_practices_path
-        )
-        _write_report(result, project_root / args.report)
-    else:
-        result = validate_tests(
-            project_root / args.tests_dir,
-            project_root / args.conftest_path
-        )
-        _write_report(result, project_root / args.report)
+    result = validate_tests(project_root / args.tests_dir)
+    _write_report(result, project_root / args.report)
 
     issues_to_log = [f"- {issue.type}: {issue.message}" for issue in result.issues or []]
     if issues_to_log:

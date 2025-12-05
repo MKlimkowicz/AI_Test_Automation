@@ -4,7 +4,7 @@ from pathlib import Path
 from datetime import datetime
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from utils.openai_client import OpenAIClient
+from utils.ai_client import AIClient
 from utils.config import config
 from utils.logger import get_logger
 
@@ -34,7 +34,7 @@ def generate_bugs_report(healing_analysis_path: str = None) -> str:
     
     logger.info(f"Generating detailed bug report for {len(actual_defects)} defect(s)...")
     
-    client = OpenAIClient()
+    client = AIClient()
     
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     bugs_md = f"""# Bug Report

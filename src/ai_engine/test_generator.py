@@ -1,15 +1,23 @@
 import sys
 import re
 from pathlib import Path
-from typing import List, Tuple, Optional
+from typing import List, Tuple, Optional, Dict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from utils.openai_client import OpenAIClient
+from utils.ai_client import AIClient
 from utils.config import config
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+CATEGORY_FILE_MAP = {
+    "Functional": "test_functional.py",
+    "Security": "test_security.py",
+    "Validation": "test_validation.py",
+    "Performance": "test_performance.py",
+    "Integration": "test_integration.py",
+}
 
 
 def read_conftest(conftest_path: Path) -> Optional[str]:
@@ -28,10 +36,19 @@ def read_conftest(conftest_path: Path) -> Optional[str]:
 
 
 def extract_test_scenarios(analysis_md: str) -> List[str]:
+    grouped = extract_scenarios_by_category(analysis_md)
     scenarios = []
+    for category, items in grouped.items():
+        for item in items:
+            scenarios.append(f"[{category}] {item}")
+    return scenarios
+
+
+def extract_scenarios_by_category(analysis_md: str) -> Dict[str, List[str]]:
+    scenarios_by_category: Dict[str, List[str]] = {}
     
     scenario_section = re.search(
-        r'##\s+Recommended Test Scenarios\s*\n(.*?)(?=\n##|\Z)',
+        r'##\s+Recommended Test Scenarios\s*\n(.*)',
         analysis_md,
         re.DOTALL | re.IGNORECASE
     )
@@ -39,49 +56,55 @@ def extract_test_scenarios(analysis_md: str) -> List[str]:
     if scenario_section:
         scenario_text = scenario_section.group(1)
 
-        categories = ['Functional Tests', 'Performance Tests', 'Security Tests']
-        found_categories = False
+        categories = ['Functional Tests', 'Performance Tests', 'Security Tests', 'Validation Tests', 'Integration Tests']
         
         for category in categories:
-            category_pattern = rf'###\s+{category}\s*\n(.*?)(?=\n###|\Z)'
+            category_pattern = rf'###\s+{category}\s*\n(.*?)(?=\n###\s+[A-Z]|\Z)'
             category_match = re.search(category_pattern, scenario_text, re.DOTALL | re.IGNORECASE)
             
             if category_match:
-                found_categories = True
+                category_name = category.replace(' Tests', '')
                 category_content = category_match.group(1)
                 lines = category_content.strip().split('\n')
                 
+                category_scenarios = []
                 for line in lines:
                     line = line.strip()
-                    if not line or line.startswith('List ') or line.startswith('Only include') or line.startswith('Suggest '):
+                    if not line:
+                        continue
+                    if line.startswith('####'):
+                        continue
+                    if line.startswith('|'):
+                        continue
+                    if line.startswith('List ') or line.startswith('Only include') or line.startswith('Suggest '):
                         continue
                     
                     if re.match(r'^\d+[\.\)]\s+', line):
                         scenario = re.sub(r'^\d+[\.\)]\s+', '', line)
-                        scenarios.append(f"[{category.replace(' Tests', '')}] {scenario}")
-
+                        scenario = re.sub(r'\*\*([^*]+)\*\*', r'\1', scenario)
+                        scenario = scenario.strip()
+                        if scenario and len(scenario) > 5:
+                            category_scenarios.append(scenario)
                     elif line.startswith('-') or line.startswith('*'):
                         scenario = line[1:].strip()
-                        if scenario and not scenario.endswith(':'):
-                            scenarios.append(f"[{category.replace(' Tests', '')}] {scenario}")
-        
-        if not found_categories:
-            lines = scenario_text.strip().split('\n')
-            for line in lines:
-                line = line.strip()
-                if re.match(r'^\d+[\.\)]\s+', line):
-                    scenario = re.sub(r'^\d+[\.\)]\s+', '', line)
-                    scenarios.append(scenario)
-                elif line.startswith('-') or line.startswith('*'):
-                    scenario = line[1:].strip()
-                    if scenario:
-                        scenarios.append(scenario)
+                        scenario = re.sub(r'\*\*([^*]+)\*\*', r'\1', scenario)
+                        if scenario and not scenario.endswith(':') and len(scenario) > 5:
+                            category_scenarios.append(scenario)
+                
+                if category_scenarios:
+                    max_tests = config.MAX_TESTS_PER_CATEGORY
+                    if len(category_scenarios) > max_tests:
+                        logger.info(f"Limiting {category_name} from {len(category_scenarios)} to {max_tests} scenarios")
+                        category_scenarios = category_scenarios[:max_tests]
+                    scenarios_by_category[category_name] = category_scenarios
+                    logger.info(f"Using {len(category_scenarios)} scenarios for {category_name}")
     
-    if not scenarios:
-        scenarios = ["Generic test based on code analysis"]
+    if not scenarios_by_category:
+        scenarios_by_category["Functional"] = ["Generic test based on code analysis"]
     
-    logger.debug(f"Extracted {len(scenarios)} scenarios")
-    return scenarios
+    total = sum(len(s) for s in scenarios_by_category.values())
+    logger.info(f"Total extracted: {total} scenarios in {len(scenarios_by_category)} categories")
+    return scenarios_by_category
 
 
 def _clean_test_code(test_code: str) -> str:
@@ -94,109 +117,70 @@ def _clean_test_code(test_code: str) -> str:
     return test_code.strip()
 
 
-def _generate_single_test(
-    client: OpenAIClient,
-    scenario: str,
+def _generate_category_tests(
+    client: AIClient,
+    category: str,
+    scenarios: List[str],
     analysis_markdown: str,
-    idx: int,
     output_path: Path,
     conftest_content: Optional[str] = None
-) -> Tuple[int, str, Optional[str]]:
+) -> Tuple[str, Optional[str]]:
     try:
-        logger.info(f"Generating tests for scenario {idx + 1}: {scenario[:60]}...")
+        filename = CATEGORY_FILE_MAP.get(category, f"test_{category.lower()}.py")
+        logger.info(f"Generating {category} tests ({len(scenarios)} scenarios) -> {filename}")
         
-        test_code = client.generate_tests(analysis_markdown, scenario, conftest_content)
+        test_code = client.generate_category_tests(
+            analysis_markdown, 
+            category, 
+            scenarios, 
+            conftest_content
+        )
         test_code = _clean_test_code(test_code)
         
-        test_filename = f"test_scenario_{idx + 1}.py"
-        test_filepath = output_path / test_filename
+        test_filepath = output_path / filename
         
         with open(test_filepath, "w") as f:
             f.write(test_code)
         
-        logger.info(f"Generated: {test_filepath}")
-        return (idx, scenario, str(test_filepath))
+        logger.info(f"Generated: {test_filepath} ({len(scenarios)} test functions)")
+        return (category, str(test_filepath))
     
     except Exception as e:
-        logger.error(f"Failed to generate test for scenario {idx + 1}: {e}")
-        return (idx, scenario, None)
+        logger.error(f"Failed to generate {category} tests: {e}")
+        return (category, None)
 
 
-def generate_tests_parallel(
-    scenarios: List[str],
+def generate_tests_by_category(
+    scenarios_by_category: Dict[str, List[str]],
     analysis_markdown: str,
     output_path: Path,
-    max_workers: Optional[int] = None,
-    conftest_content: Optional[str] = None
+    conftest_content: Optional[str] = None,
+    parallel: bool = False
 ) -> List[str]:
-    workers = max_workers or config.MAX_PARALLEL_WORKERS
-    logger.info(f"Starting parallel test generation with {workers} workers...")
-    
-    client = OpenAIClient()
-    
+    client = AIClient()
     generated_files = []
-    failed_scenarios = []
+    failed_categories = []
     
-    with ThreadPoolExecutor(max_workers=workers) as executor:
-        futures = {
-            executor.submit(
-                _generate_single_test,
-                client,
-                scenario,
-                analysis_markdown,
-                idx,
-                output_path,
-                conftest_content
-            ): idx
-            for idx, scenario in enumerate(scenarios)
-        }
-        
-        for future in as_completed(futures):
-            idx, scenario, filepath = future.result()
-            if filepath:
-                generated_files.append(filepath)
-            else:
-                failed_scenarios.append((idx, scenario))
+    logger.info(f"Generating {len(scenarios_by_category)} category files sequentially...")
+    logger.info(f"Categories to generate: {list(scenarios_by_category.keys())}")
     
-    generated_files.sort(key=lambda x: int(x.split('_')[-1].replace('.py', '')))
+    for category, scenarios in scenarios_by_category.items():
+        logger.info(f"Processing category: {category} ({len(scenarios)} scenarios)")
+        cat, filepath = _generate_category_tests(
+            client, category, scenarios, analysis_markdown, output_path, conftest_content
+        )
+        if filepath:
+            generated_files.append(filepath)
+            logger.info(f"Successfully generated: {filepath}")
+        else:
+            failed_categories.append(cat)
+            logger.error(f"Failed to generate tests for category: {cat}")
     
-    if failed_scenarios:
-        logger.warning(f"{len(failed_scenarios)} scenario(s) failed to generate")
-        for idx, scenario in failed_scenarios:
-            logger.warning(f"  - Scenario {idx + 1}: {scenario[:50]}...")
+    if failed_categories:
+        logger.warning(f"{len(failed_categories)} category(ies) failed to generate: {failed_categories}")
     
-    logger.info(f"Parallel generation complete: {len(generated_files)}/{len(scenarios)} successful")
-    return generated_files
-
-
-def generate_tests_sequential(
-    scenarios: List[str],
-    analysis_markdown: str,
-    output_path: Path,
-    conftest_content: Optional[str] = None
-) -> List[str]:
-    client = OpenAIClient()
-    generated_files = []
-    
-    for idx, scenario in enumerate(scenarios):
-        logger.info(f"Generating tests for scenario {idx + 1}/{len(scenarios)}: {scenario[:60]}...")
-        
-        try:
-            test_code = client.generate_tests(analysis_markdown, scenario, conftest_content)
-            test_code = _clean_test_code(test_code)
-            
-            test_filename = f"test_scenario_{idx + 1}.py"
-            test_filepath = output_path / test_filename
-            
-            with open(test_filepath, "w") as f:
-                f.write(test_code)
-            
-            generated_files.append(str(test_filepath))
-            logger.info(f"Generated: {test_filepath}")
-        
-        except Exception as e:
-            logger.error(f"Failed to generate test for scenario {idx + 1}: {e}")
-    
+    total_scenarios = sum(len(s) for s in scenarios_by_category.values())
+    logger.info(f"Generation complete: {len(generated_files)}/{len(scenarios_by_category)} files, {total_scenarios} total scenarios")
     return generated_files
 
 
@@ -214,9 +198,6 @@ def generate_tests(
     if output_dir is None:
         output_dir = "tests/generated"
     
-    if conftest_path is None:
-        conftest_path = str(project_root / "tests" / "conftest.py")
-    
     analysis_path = Path(analysis_md_path)
     
     if not analysis_path.exists():
@@ -229,26 +210,27 @@ def generate_tests(
     
     logger.info(f"Reading analysis from: {analysis_path}")
     logger.info(f"Analysis size: {len(analysis_markdown)} characters")
+    logger.info("Generating self-contained tests (no conftest dependency)")
     
-    conftest_content = read_conftest(Path(conftest_path))
-    if conftest_content:
-        logger.info(f"Reading conftest from: {conftest_path}")
-        logger.info(f"Conftest size: {len(conftest_content)} characters")
-    else:
-        logger.info("No conftest.py found, tests will define their own fixtures")
+    scenarios_by_category = extract_scenarios_by_category(analysis_markdown)
     
-    scenarios = extract_test_scenarios(analysis_markdown)
-    logger.info(f"Extracted {len(scenarios)} test scenario(s):")
-    for idx, scenario in enumerate(scenarios, 1):
-        logger.debug(f"  {idx}. {scenario}")
+    total_scenarios = sum(len(s) for s in scenarios_by_category.values())
+    logger.info(f"Extracted {total_scenarios} test scenarios in {len(scenarios_by_category)} categories:")
+    for category, scenarios in scenarios_by_category.items():
+        logger.info(f"  - {category}: {len(scenarios)} scenarios")
+        for idx, scenario in enumerate(scenarios, 1):
+            logger.debug(f"      {idx}. {scenario}")
     
     output_path = project_root / output_dir
     output_path.mkdir(parents=True, exist_ok=True)
     
-    if parallel and len(scenarios) > 1:
-        generated_files = generate_tests_parallel(scenarios, analysis_markdown, output_path, conftest_content=conftest_content)
-    else:
-        generated_files = generate_tests_sequential(scenarios, analysis_markdown, output_path, conftest_content=conftest_content)
+    generated_files = generate_tests_by_category(
+        scenarios_by_category,
+        analysis_markdown,
+        output_path,
+        conftest_content=None,
+        parallel=parallel
+    )
     
     return generated_files
 

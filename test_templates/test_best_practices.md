@@ -133,7 +133,7 @@ import requests
 
 @pytest.fixture
 def api_base_url():
-    return "http://localhost:5000"
+    return "http://localhost:5050"
 
 @pytest.fixture
 def api_client():

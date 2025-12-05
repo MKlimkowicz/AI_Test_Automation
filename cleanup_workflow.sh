@@ -61,14 +61,24 @@ if [ -f "reports/BUGS.md" ]; then
     log_success "Removed reports/BUGS.md"
 fi
 
+if [ -f "reports/app_metadata.json" ]; then
+    rm -f reports/app_metadata.json
+    log_success "Removed reports/app_metadata.json"
+fi
+
+if [ -f "reports/validation_conftest.json" ]; then
+    rm -f reports/validation_conftest.json
+    log_success "Removed reports/validation_conftest.json"
+fi
+
+if [ -f "reports/validation_tests.json" ]; then
+    rm -f reports/validation_tests.json
+    log_success "Removed reports/validation_tests.json"
+fi
+
 if [ -d "tests/generated" ]; then
     rm -rf tests/generated/*
     log_success "Cleaned tests/generated/"
-fi
-
-if [ -f "tests/conftest.py" ]; then
-    > tests/conftest.py
-    log_success "Cleared tests/conftest.py"
 fi
 
 if [ -f "logs/workflow.log" ]; then

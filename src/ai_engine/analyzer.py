@@ -6,9 +6,10 @@ from datetime import datetime
 from collections import Counter
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from utils.openai_client import OpenAIClient
+from utils.ai_client import AIClient
 from utils.config import config
 from utils.logger import get_logger
+from utils.app_metadata import AppMetadata
 
 logger = get_logger(__name__)
 
@@ -260,9 +261,9 @@ No code or documentation files found in the app directory.
         return str(output_path)
     
     logger.info(f"Found {len(code_files)} code file(s) and {len(doc_files)} documentation file(s)")
-    logger.info(f"Analyzing with {config.OPENAI_MODEL}...")
+    logger.info(f"Analyzing with Claude ({config.CLAUDE_MODEL})...")
     
-    client = OpenAIClient()
+    client = AIClient()
     analysis_md = client.analyze_code_and_docs(code_files, doc_files, detected_languages)
     
     if analysis_md.startswith("```markdown"):
@@ -280,8 +281,17 @@ No code or documentation files found in the app directory.
     with open(output_path, "w") as f:
         f.write(analysis_md)
     
+    logger.info(f"Markdown report saved to: {output_path}")
+    
+    logger.info("Generating structured metadata...")
+    metadata_dict = client.generate_app_metadata(code_files, doc_files, detected_languages)
+    metadata = AppMetadata.from_dict(metadata_dict)
+    
+    metadata_path = project_root / "reports" / "app_metadata.json"
+    metadata.save(metadata_path)
+    logger.info(f"Structured metadata saved to: {metadata_path}")
+    
     logger.info("Analysis complete!")
-    logger.info(f"Report saved to: {output_path}")
     
     preview = analysis_md[:500] + "..." if len(analysis_md) > 500 else analysis_md
     logger.debug(f"Analysis Preview:\n{'=' * 80}\n{preview}\n{'=' * 80}")

@@ -4,7 +4,7 @@ from pathlib import Path
 from datetime import datetime
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from utils.openai_client import OpenAIClient
+from utils.ai_client import AIClient
 from utils.config import config
 from utils.logger import get_logger
 from ai_engine.bug_reporter import generate_bugs_report
@@ -13,7 +13,7 @@ logger = get_logger(__name__)
 
 
 def summarize_report(html_report_path: str, healing_analysis_path: str) -> str:
-    client = OpenAIClient()
+    client = AIClient()
     
     project_root = config.get_project_root()
     html_path = project_root / html_report_path

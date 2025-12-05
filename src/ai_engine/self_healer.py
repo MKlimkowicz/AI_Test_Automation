@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Dict, List
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from utils.openai_client import OpenAIClient
+from utils.ai_client import AIClient
 from utils.config import config
 from utils.logger import get_logger
 from ai_engine.test_runner import run_single_test
@@ -13,7 +13,7 @@ from ai_engine.test_runner import run_single_test
 logger = get_logger(__name__)
 
 
-def heal_collection_errors(report_data: Dict, project_root: Path, client: OpenAIClient) -> Dict:
+def heal_collection_errors(report_data: Dict, project_root: Path, client: AIClient) -> Dict:
     collectors = report_data.get("collectors", [])
     failed_collectors = [c for c in collectors if c.get("outcome") == "failed"]
     
@@ -107,7 +107,7 @@ def heal_failed_tests(json_report_path: str, max_attempts: int = None) -> Dict:
     if max_attempts is None:
         max_attempts = config.MAX_HEALING_ATTEMPTS
     
-    client = OpenAIClient()
+    client = AIClient()
     
     project_root = config.get_project_root()
     report_path = project_root / json_report_path

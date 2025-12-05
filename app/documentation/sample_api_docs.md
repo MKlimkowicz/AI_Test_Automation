@@ -5,7 +5,7 @@ A RESTful API for managing users with authentication capabilities. Built with Fl
 
 ## Base URL
 ```
-http://localhost:5000
+http://localhost:5050
 ```
 
 ## Endpoints

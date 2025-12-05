@@ -60,12 +60,12 @@ check_prerequisites() {
     fi
     log_success "Python 3 found: $(python3 --version)"
     
-    if [ -z "$OPENAI_API_KEY" ]; then
-        log_error "OPENAI_API_KEY environment variable is not set"
-        log_info "Set it with: export OPENAI_API_KEY='your-key-here'"
+    if [ -z "$CLAUDE_API_KEY" ]; then
+        log_error "CLAUDE_API_KEY environment variable is not set"
+        log_info "Set it with: export CLAUDE_API_KEY='your-key-here'"
         exit 1
     fi
-    log_success "OPENAI_API_KEY is set"
+    log_success "CLAUDE_API_KEY is set"
     
     if ! python3 -c "import flask" 2>/dev/null; then
         log_warning "Flask not found. Installing dependencies..."
@@ -77,7 +77,7 @@ check_prerequisites() {
 start_api() {
     log_step "Starting Sample API Server"
     
-    lsof -ti:5000 | xargs kill -9 2>/dev/null || true
+    lsof -ti:5050 | xargs kill -9 2>/dev/null || true
     
     python3 app/sample_api.py > /tmp/flask_api.log 2>&1 &
     API_PID=$!
@@ -85,7 +85,7 @@ start_api() {
     log_info "Waiting for API to start..."
     sleep 3
     
-    if curl -s http://localhost:5000/health > /dev/null 2>&1; then
+    if curl -s http://localhost:5050/health > /dev/null 2>&1; then
         log_success "API is running (PID: $API_PID)"
         echo $API_PID > /tmp/flask_api.pid
     else
@@ -126,37 +126,8 @@ run_analyzer() {
     fi
 }
 
-generate_fixtures() {
-    log_step "Step 2: Generating Fixtures (conftest.py)"
-    
-    if python3 src/ai_engine/fixture_generator.py; then
-        log_success "Fixture generation complete"
-        
-        if [ -f "tests/conftest.py" ]; then
-            log_info "Generated fixtures: tests/conftest.py"
-        fi
-    else
-        log_error "Fixture generation failed"
-        exit 1
-    fi
-}
-
-validate_fixtures() {
-    log_step "Step 3: Validating Fixtures"
-
-    if python3 src/ai_engine/test_validator.py conftest \
-        --conftest-path tests/conftest.py \
-        --best-practices-path test_templates/test_best_practices.md; then
-        log_success "Fixture validation passed"
-    else
-        log_error "Fixture validation failed"
-        log_info "See reports/validation_conftest.json for details"
-        exit 1
-    fi
-}
-
 generate_tests() {
-    log_step "Step 4: Generating Test Scenarios"
+    log_step "Step 2: Generating Self-Contained Test Files"
     
     if python3 src/ai_engine/test_generator.py; then
         log_success "Test generation complete"
@@ -170,21 +141,19 @@ generate_tests() {
 }
 
 validate_tests() {
-    log_step "Step 5: Validating Generated Tests"
+    log_step "Step 3: Validating Generated Tests"
 
     if python3 src/ai_engine/test_validator.py tests \
-        --tests-dir tests/generated \
-        --conftest-path tests/conftest.py; then
+        --tests-dir tests/generated; then
         log_success "Test validation passed"
     else
-        log_error "Test validation failed"
+        log_warning "Test validation found issues (will attempt healing)"
         log_info "See reports/validation_tests.json for details"
-        exit 1
     fi
 }
 
 run_tests() {
-    log_step "Step 6: Executing Tests"
+    log_step "Step 4: Executing Tests"
     
     if pytest tests/generated/ \
         --html=reports/html/report.html \
@@ -201,7 +170,7 @@ run_tests() {
 }
 
 run_self_healing() {
-    log_step "Step 7: Iterative Self-Healing"
+    log_step "Step 5: Iterative Self-Healing"
     
     if python3 src/ai_engine/self_healer.py; then
         log_success "Self-healing complete"
@@ -234,7 +203,7 @@ EOF
 }
 
 check_commit() {
-    log_step "Step 8: Checking Commit Conditions"
+    log_step "Step 6: Checking Commit Conditions"
     
     if python3 src/ai_engine/commit_controller.py; then
         COMMIT_ALLOWED=$(python3 src/ai_engine/commit_controller.py 2>&1 | grep -o "commit_allowed=[a-z]*" | cut -d= -f2)
@@ -254,7 +223,7 @@ check_commit() {
 }
 
 generate_reports() {
-    log_step "Step 9: Generating Final Reports"
+    log_step "Step 7: Generating Final Reports"
     
     if python3 src/ai_engine/report_summarizer.py; then
         log_success "Reports generated"
@@ -353,8 +322,6 @@ main() {
     check_prerequisites
     start_api
     run_analyzer
-    generate_fixtures
-    validate_fixtures
     generate_tests
     validate_tests
     run_tests

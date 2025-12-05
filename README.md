@@ -1,6 +1,6 @@
 # AI Test Automation Framework
 
-An intelligent test automation framework that uses GPT-4o-mini to automatically generate, execute, and self-heal tests with AI-powered reporting.
+An intelligent test automation framework that uses Claude (Anthropic) to automatically generate, execute, and self-heal tests with AI-powered reporting.
 
 ## Features
 
@@ -21,6 +21,8 @@ An intelligent test automation framework that uses GPT-4o-mini to automatically 
   - **Performance Tests**: Load, stress, concurrency (when applicable)
   - **Security Tests**: Auth, injection prevention, access control (when applicable)
   - Only suggests categories relevant to your application
+  - **Max 5 tests per category** (configurable via `MAX_TESTS_PER_CATEGORY`)
+- **Self-Contained Tests**: Each test file is independent with its own fixtures
 - **AI-Powered Analysis Reports**: Generates comprehensive markdown analysis of your codebase
 - **AI-Powered Test Generation**: Automatically generates pytest tests based on code analysis
 - **Iterative Self-Healing**: Continuously heals tests until they pass or are classified as bugs
@@ -52,18 +54,20 @@ AI_Test_Automation/
 │   │   ├── bug_reporter.py       # Generates BUGS.md
 │   │   └── report_summarizer.py  # AI report generation
 │   └── utils/
-│       └── openai_client.py      # OpenAI GPT-4o-mini client
+│       ├── ai_client.py          # Claude/Anthropic API client
+│       └── config.py             # Configuration settings
 ├── tests/
-│   ├── generated/                # AI-generated tests
-│   └── conftest.py               # Shared pytest fixtures
+│   └── generated/                # AI-generated tests (self-contained)
 ├── test_templates/
 │   └── test_best_practices.md    # Testing best practices guide
 ├── reports/
 │   ├── analysis.md               # AI-generated code analysis
+│   ├── app_metadata.json         # Structured app metadata
 │   ├── BUGS.md                   # Detailed bug reports (when defects found)
 │   ├── html/                     # Pytest HTML reports
 │   └── summaries/                # AI-generated summaries
 ├── run_full_workflow.sh          # Automated workflow script
+├── cleanup_workflow.sh           # Cleanup script
 ├── requirements.txt
 ├── pytest.ini
 └── README.md
@@ -74,7 +78,7 @@ AI_Test_Automation/
 ### Prerequisites
 
 - Python 3.11+
-- OpenAI API key with access to GPT-4o-mini
+- Claude API key (Anthropic)
 
 ### Local Setup
 
@@ -84,17 +88,17 @@ AI_Test_Automation/
 pip install -r requirements.txt
 ```
 
-3. Set your OpenAI API key:
+3. Set your Claude API key:
 ```bash
-export OPENAI_API_KEY='your-api-key-here'
+export CLAUDE_API_KEY='your-api-key-here'
 ```
 
 ### GitHub Actions Setup
 
 1. Go to your repository Settings > Secrets and variables > Actions
 2. Add a new repository secret:
-   - Name: `OPENAI_API_KEY`
-   - Value: Your OpenAI API key
+   - Name: `CLAUDE_API_KEY`
+   - Value: Your Anthropic API key
 
 ## Sample Application
 
@@ -112,7 +116,7 @@ The framework includes a **sample Flask API** for testing and demonstration:
 **Running the Sample API:**
 ```bash
 python app/sample_api.py
-# API runs on http://localhost:5000
+# API runs on http://localhost:5050
 ```
 
 **Testing the Sample API:**
@@ -160,10 +164,15 @@ Run the complete workflow with a single command:
 ```
 
 This automated script:
-- Checks prerequisites (Python, OpenAI API key)
+- Checks prerequisites (Python, Claude API key)
 - Starts the sample Flask API server
-- Runs all 6 workflow steps automatically
-- Generates all reports (including BUGS.md)
+- Runs the complete workflow:
+  1. Analyzes code and generates `analysis.md`
+  2. Generates self-contained tests by category
+  3. Validates generated tests
+  4. Runs tests
+  5. Performs iterative self-healing
+  6. Generates summary reports
 - Stops the API server on completion
 - Returns appropriate exit codes for CI/CD
 
@@ -175,7 +184,7 @@ This automated script:
 
 **Option 1: Automated Workflow (Recommended)**
 ```bash
-export OPENAI_API_KEY='your-api-key-here'
+export CLAUDE_API_KEY='your-api-key-here'
 ./run_full_workflow.sh
 ```
 
@@ -185,13 +194,13 @@ export OPENAI_API_KEY='your-api-key-here'
 ```bash
 python src/ai_engine/analyzer.py
 ```
-This scans Python files in `app/` directory and generates `reports/analysis.md`
+This scans files in `app/` directory and generates `reports/analysis.md`
 
 2. **Generate Tests**:
 ```bash
 python src/ai_engine/test_generator.py
 ```
-This reads `analysis.md` and generates pytest tests
+This reads `analysis.md` and generates self-contained pytest tests by category
 
 3. **Run Tests**:
 ```bash
@@ -256,7 +265,7 @@ The analyzer scans the `app/` directory for code, configuration, and documentati
 - Combines documentation with code when both exist
 
 **AI Analysis**:
-- Sends code, config, and documentation to GPT-4o-mini
+- Sends code, config, and documentation to Claude
 - Detects frameworks (Flask, Django, FastAPI, Express, Spring, Actix-web, etc.)
 - Generates `reports/analysis.md` with:
   - Project structure overview
@@ -265,16 +274,18 @@ The analyzer scans the `app/` directory for code, configuration, and documentati
   - Database models
   - Key functions and classes
   - **Categorized test scenarios** (Functional/Performance/Security)
+- Generates `reports/app_metadata.json` with structured metadata
 
 ### 2. Test Generation
-GPT-4o-mini reads `analysis.md` and generates pytest tests:
+Claude reads `analysis.md` and generates pytest tests:
 - Extracts test scenarios from categorized sections:
   - **Functional Tests**: Core feature testing (always included)
   - **Performance Tests**: Load/stress testing (when applicable)
   - **Security Tests**: Auth/injection testing (when applicable)
-- Prefixes test files with category tags: `[Functional]`, `[Performance]`, `[Security]`
+- **Limits to 5 tests per category** (configurable)
+- Creates one file per category: `test_functional.py`, `test_security.py`, etc.
+- **Self-contained tests**: Each file includes its own fixtures and helpers
 - Follows pytest conventions
-- Minimal comments and docstrings
 - Type-hinted code
 - Independent, reusable tests
 
@@ -333,24 +344,17 @@ Comprehensive reports are generated:
 - Potential fixes
 - Related code files
 
-## Report Structure
-
-### AI Summary Includes:
-1. **Executive Summary**
-   - Total tests, pass rate, duration
-2. **Test Results Overview**
-   - Passed, failed, skipped counts
-3. **Failure Analysis**
-   - Test Errors (Self-Healed) with fix details
-   - Actual Defects (Requiring Investigation)
-4. **Self-Healing Actions**
-   - What was fixed and why
-   - Confidence levels
-5. **Recommendations**
-   - Next steps
-   - Areas requiring attention
-
 ## Configuration
+
+### Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CLAUDE_API_KEY` | (required) | Your Anthropic API key |
+| `CLAUDE_MODEL` | `claude-sonnet-4-5` | Claude model to use |
+| `MAX_TESTS_PER_CATEGORY` | `5` | Maximum tests generated per category |
+| `MAX_HEALING_ATTEMPTS` | `3` | Max healing attempts per test |
+| `MAX_TOKENS_GENERATION` | `8000` | Token limit for test generation |
 
 ### pytest.ini
 ```ini
@@ -455,11 +459,10 @@ The repository includes a complete working example in `app/sample_api.py`:
 ```
 
 **Expected Results:**
-- 15+ tests generated
-- 1-2 tests self-healed automatically
-- 1 actual defect detected (intentional login bug)
+- Up to 5 tests per category (Functional, Security, Validation)
+- Tests self-healed automatically when needed
+- Actual defects detected and flagged
 - BUGS.md generated with detailed analysis
-- Commit blocked until defect is fixed
 
 **Viewing Results:**
 - HTML Report: `reports/html/report.html`
@@ -468,15 +471,14 @@ The repository includes a complete working example in `app/sample_api.py`:
 
 ## Dependencies
 
-- `openai==1.54.0` - GPT-4o-mini integration
+- `anthropic>=0.18.0` - Claude AI integration
 - `pytest==8.3.3` - Test framework
 - `pytest-html==4.1.1` - HTML reporting
 - `pytest-json-report==1.5.0` - JSON reporting
+- `tenacity>=8.2.0` - Retry logic
 
 ## Key Features Documentation
 
-- **[ITERATIVE_HEALING.md](ITERATIVE_HEALING.md)** - Complete guide to iterative self-healing
-- **[WORKFLOW.md](WORKFLOW.md)** - Detailed workflow documentation
 - **[test_templates/test_best_practices.md](test_templates/test_best_practices.md)** - Testing best practices and patterns
 
 ## Contributing
@@ -486,4 +488,3 @@ This is a portfolio project demonstrating AI-powered test automation capabilitie
 ## License
 
 MIT License
-
