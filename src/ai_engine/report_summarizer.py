@@ -7,6 +7,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from utils.ai_client import AIClient
 from utils.config import config
 from utils.logger import get_logger
+from utils.helpers import strip_markdown_fences
 from ai_engine.bug_reporter import generate_bugs_report
 
 logger = get_logger(__name__)
@@ -45,14 +46,7 @@ def summarize_report(html_report_path: str, healing_analysis_path: str) -> str:
     logger.info("Generating AI summary...")
     
     markdown_summary = client.summarize_report(report_info, healing_data)
-    
-    if markdown_summary.startswith("```markdown"):
-        markdown_summary = markdown_summary[11:]
-    if markdown_summary.startswith("```"):
-        markdown_summary = markdown_summary[3:]
-    if markdown_summary.endswith("```"):
-        markdown_summary = markdown_summary[:-3]
-    markdown_summary = markdown_summary.strip()
+    markdown_summary = strip_markdown_fences(markdown_summary)
     
     actual_defects = healing_data.get("actual_defects", [])
     if actual_defects:

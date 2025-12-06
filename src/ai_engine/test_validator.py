@@ -16,6 +16,30 @@ from utils.ai_client import AIClient
 logger = get_logger(__name__)
 
 
+def load_app_metadata(project_root: Path) -> Dict:
+    metadata_path = project_root / "reports" / "app_metadata.json"
+    
+    if metadata_path.exists():
+        try:
+            with open(metadata_path, "r") as f:
+                metadata = json.load(f)
+            logger.info(f"Loaded app metadata: app_type={metadata.get('app_type')}, port={metadata.get('port')}")
+            return metadata
+        except json.JSONDecodeError as e:
+            logger.warning(f"Failed to parse app_metadata.json: {e}")
+    else:
+        logger.warning(f"No app_metadata.json found at {metadata_path}")
+    
+    return {
+        "app_type": "rest_api",
+        "framework": "unknown",
+        "languages": [],
+        "base_url": "http://localhost",
+        "port": 8080,
+        "auth_required": False
+    }
+
+
 @dataclass
 class ValidationIssue:
     type: str
@@ -120,11 +144,14 @@ def _auto_fix_imports(py_path: Path, code: str, missing_modules: List[str]) -> T
 
 def validate_tests(
     tests_dir: Path,
-    conftest_path: Optional[Path] = None,
     allow_autofix: bool = True,
-    max_healing_attempts: int = 3
+    max_healing_attempts: int = 3,
+    app_metadata: Dict = None
 ) -> ValidationResult:
     logger.info("Validating tests in %s", tests_dir)
+
+    if app_metadata is None:
+        app_metadata = {}
 
     test_files = sorted(tests_dir.glob("test_*.py"))
     if not test_files:
@@ -163,11 +190,10 @@ def validate_tests(
                         autofix_applied = True
                         file_content[str(test_file)] = updated_code
 
-        conftest_code = conftest_path.read_text() if conftest_path and conftest_path.exists() else ""
         ai_passed: Optional[bool] = None
         if syntax_ok and imports_ok:
             try:
-                review = client.validate_tests(file_content, conftest_code)
+                review = client.validate_tests(file_content, app_metadata)
                 ai_passed = review.get("status") == "pass"
                 for item in review.get("issues", []):
                     issues.append(
@@ -214,7 +240,7 @@ def validate_tests(
                 }
                 for issue in issues
             ]
-            healed_files = client.heal_tests(file_content, conftest_code, heal_payload)
+            healed_files = client.heal_tests(file_content, heal_payload)
             if healed_files:
                 for path_str, healed_code in healed_files.items():
                     if healed_code and healed_code.strip():
@@ -257,7 +283,9 @@ def main() -> int:
     if str(project_root) not in sys.path:
         sys.path.insert(0, str(project_root))
 
-    result = validate_tests(project_root / args.tests_dir)
+    app_metadata = load_app_metadata(project_root)
+    
+    result = validate_tests(project_root / args.tests_dir, app_metadata=app_metadata)
     _write_report(result, project_root / args.report)
 
     issues_to_log = [f"- {issue.type}: {issue.message}" for issue in result.issues or []]

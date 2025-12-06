@@ -28,29 +28,23 @@ An intelligent test automation framework that uses Claude (Anthropic) to automat
 - **Iterative Self-Healing**: Continuously heals tests until they pass or are classified as bugs
   - Test errors are automatically fixed and rerun (max 3 attempts per test)
   - Re-classification after each failed rerun
-  - Only commits when all test errors are successfully healed
   - Actual defects are flagged for investigation with detailed bug reports
 - **Automated Execution**: Runs generated tests with comprehensive reporting
 - **AI-Generated Summaries**: Creates detailed markdown reports with failure analysis
-- **GitHub Actions Integration**: Fully automated workflow with manual dispatch trigger
 
 ## Project Structure
 
 ```
 AI_Test_Automation/
-├── .github/workflows/
-│   └── ai-test-automation.yml    # GitHub Actions workflow
 ├── app/                          # Your application code (to be analyzed)
 │   ├── sample_api.py             # Sample Flask API (for testing)
-│   ├── documentation/
-│   │   └── sample_api_docs.md    # Sample API documentation
-│   └── __init__.py
+│   └── documentation/
+│       └── sample_api_docs.md    # Sample API documentation
 ├── src/
 │   ├── ai_engine/
 │   │   ├── analyzer.py           # Scans app/ and generates analysis.md
 │   │   ├── test_generator.py     # Generates tests from analysis.md
 │   │   ├── self_healer.py        # Failure analysis and self-healing
-│   │   ├── commit_controller.py  # Commit condition checker
 │   │   ├── bug_reporter.py       # Generates BUGS.md
 │   │   └── report_summarizer.py  # AI report generation
 │   └── utils/
@@ -93,13 +87,6 @@ pip install -r requirements.txt
 export CLAUDE_API_KEY='your-api-key-here'
 ```
 
-### GitHub Actions Setup
-
-1. Go to your repository Settings > Secrets and variables > Actions
-2. Add a new repository secret:
-   - Name: `CLAUDE_API_KEY`
-   - Value: Your Anthropic API key
-
 ## Sample Application
 
 The framework includes a **sample Flask API** for testing and demonstration:
@@ -111,7 +98,6 @@ The framework includes a **sample Flask API** for testing and demonstration:
 - Authentication endpoint
 - Pagination support
 - Input validation
-- **Intentional bug** in login endpoint (for defect detection testing)
 
 **Running the Sample API:**
 ```bash
@@ -141,13 +127,13 @@ cp your_docs.md app/documentation/
 
 The analyzer currently has **temporary filters** to only scan `sample_api` files. To analyze all files in `app/`:
 
-Edit `src/ai_engine/analyzer.py` and **remove lines 215-216 and 222-223**:
+Edit `src/ai_engine/analyzer.py` and **remove lines 228 and 234**:
 ```python
 # REMOVE THESE LINES:
-# Line 215-216:
+# Line 228:
 code_files = {k: v for k, v in code_files.items() if 'sample_api' in k}
 
-# Line 222-223:
+# Line 234:
 doc_files = {k: v for k, v in doc_files.items() if 'sample_api' in k}
 ```
 
@@ -174,11 +160,6 @@ This automated script:
   5. Performs iterative self-healing
   6. Generates summary reports
 - Stops the API server on completion
-- Returns appropriate exit codes for CI/CD
-
-**Exit Codes:**
-- `0`: All tests passed or only actual defects remain (commit allowed)
-- `1`: Tests failed after max healing attempts (commit blocked)
 
 ### Running Locally
 
@@ -212,27 +193,10 @@ pytest
 python src/ai_engine/self_healer.py
 ```
 
-5. **Check Commit Conditions**:
-```bash
-python src/ai_engine/commit_controller.py
-```
-
-6. **Generate Summary & Bug Reports**:
+5. **Generate Summary & Bug Reports**:
 ```bash
 python src/ai_engine/report_summarizer.py
 ```
-
-### Running with GitHub Actions
-
-1. Go to the "Actions" tab in your repository
-2. Select "AI Test Automation" workflow
-3. Click "Run workflow"
-4. Wait for completion
-5. Download artifacts:
-   - `analysis-report`: Code analysis markdown
-   - `test-reports`: HTML and JSON test reports
-   - `ai-summary`: AI-generated markdown summary
-   - `generated-tests`: All generated test files
 
 ## How It Works
 
@@ -319,11 +283,6 @@ For each test failure, AI classifies it and enters an iterative healing loop:
 - Database issues
 - Business logic errors
 
-**Commit Control**:
-- Commits only when all TEST_ERROR tests are successfully healed
-- Blocks commit if tests exceed max healing attempts
-- ACTUAL_DEFECT tests don't block commits (require manual investigation)
-
 ### 5. AI Summary & Bug Reports
 Comprehensive reports are generated:
 
@@ -333,7 +292,6 @@ Comprehensive reports are generated:
 - Successfully healed tests (with attempt counts)
 - Tests that exceeded max attempts
 - Categorized failures (test errors vs defects)
-- Commit status (allowed or blocked)
 - Recommendations
 
 **Bug Report** (`reports/BUGS.md`) - Generated when defects found:
@@ -369,11 +327,6 @@ addopts =
     --json-report
     --json-report-file=reports/pytest-report.json
 ```
-
-### GitHub Actions Workflow
-- **Trigger**: Manual dispatch (`workflow_dispatch`)
-- **Artifacts Retention**: 30 days
-- **Auto-commit**: Healed tests and summaries are committed back to repo
 
 ## Adding Your Own Code
 
@@ -443,7 +396,7 @@ The repository includes a complete working example in `app/sample_api.py`:
 **Application Features:**
 - Flask REST API with 7 endpoints
 - User CRUD operations
-- Authentication endpoint (with intentional bug)
+- Authentication endpoint
 - Pagination support
 - Input validation
 

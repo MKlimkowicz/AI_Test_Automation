@@ -13,7 +13,7 @@ from tenacity import (
 
 from utils.config import config
 from utils.logger import get_logger
-from utils.app_metadata import AppMetadata, get_json_schema
+from utils.helpers import strip_markdown_fences
 
 logger = get_logger(__name__)
 
@@ -83,14 +83,20 @@ class AIClient:
         
         return content.strip()
 
-    def analyze_code_and_docs(
-        self,
-        code_files: Dict[str, Tuple[str, str]],
-        doc_files: Dict[str, str],
-        languages: List[str]
-    ) -> str:
-        logger.info("Analyzing code and documentation...")
+    def _get_connection_info(self, app_metadata: Dict) -> tuple:
+        app_type = app_metadata.get("app_type", "rest_api")
         
+        http_conn = app_metadata.get("http_connection", {})
+        base_url = http_conn.get("base_url") or app_metadata.get("base_url", "http://localhost")
+        port = http_conn.get("port") or app_metadata.get("port", 8080)
+        
+        return app_type, base_url, port
+
+    def _format_code_sections(
+        self, 
+        code_files: Dict[str, Tuple[str, str]], 
+        doc_files: Dict[str, str]
+    ) -> str:
         code_section = ""
         if code_files:
             code_parts = []
@@ -124,15 +130,24 @@ class AIClient:
                 doc_parts.append(f"### Documentation: {filepath}\n```\n{content}\n```")
             doc_section = "## Documentation\n\n" + "\n\n".join(doc_parts)
         
-        languages_str = ", ".join(languages) if languages else "None detected"
-        
         content_sections = []
         if code_section:
             content_sections.append(code_section)
         if doc_section:
             content_sections.append(doc_section)
         
-        full_content = "\n\n".join(content_sections)
+        return "\n\n".join(content_sections)
+
+    def analyze_code_and_docs(
+        self,
+        code_files: Dict[str, Tuple[str, str]],
+        doc_files: Dict[str, str],
+        languages: List[str]
+    ) -> str:
+        logger.info("Analyzing code and documentation...")
+        
+        full_content = self._format_code_sections(code_files, doc_files)
+        languages_str = ", ".join(languages) if languages else "None detected"
         
         prompt = f"""Analyze the following application and generate a comprehensive markdown report for test planning.
 
@@ -221,10 +236,6 @@ Return ONLY the markdown, no additional explanations."""
         logger.info("Code analysis complete")
         return result
 
-    def analyze_code(self, code_files: Dict[str, str]) -> str:
-        converted_files = {path: (content, 'python') for path, content in code_files.items()}
-        return self.analyze_code_and_docs(converted_files, {}, ['python'])
-
     def generate_app_metadata(
         self,
         code_files: Dict[str, Tuple[str, str]],
@@ -233,374 +244,149 @@ Return ONLY the markdown, no additional explanations."""
     ) -> Dict:
         logger.info("Generating structured application metadata...")
 
-        code_section = ""
-        if code_files:
-            code_parts = []
-            config_parts = []
-            for filepath, (content, language) in code_files.items():
-                if language == 'config':
-                    if filepath.endswith('.json'):
-                        fence = 'json'
-                    elif filepath.endswith('.toml'):
-                        fence = 'toml'
-                    elif filepath.endswith('.xml'):
-                        fence = 'xml'
-                    elif filepath.endswith('.yaml') or filepath.endswith('.yml'):
-                        fence = 'yaml'
-                    else:
-                        fence = 'text'
-                    config_parts.append(f"### Configuration: {filepath}\n```{fence}\n{content}\n```")
-                else:
-                    code_parts.append(f"### File: {filepath}\n```{language}\n{content}\n```")
+        full_content = self._format_code_sections(code_files, doc_files)
+        languages_str = ", ".join(languages) if languages else "unknown"
 
-            if code_parts:
-                code_section = "## Application Code\n\n" + "\n\n".join(code_parts)
-            if config_parts:
-                config_section = "## Configuration Files\n\n" + "\n\n".join(config_parts)
-                code_section = code_section + "\n\n" + config_section if code_section else config_section
+        prompt = f"""Analyze the code/documentation below and extract metadata as JSON.
 
-        doc_section = ""
-        if doc_files:
-            doc_parts = []
-            for filepath, content in doc_files.items():
-                doc_parts.append(f"### Documentation: {filepath}\n```\n{content}\n```")
-            doc_section = "## Documentation\n\n" + "\n\n".join(doc_parts)
-
-        languages_str = ", ".join(languages) if languages else "None detected"
-
-        content_sections = []
-        if code_section:
-            content_sections.append(code_section)
-        if doc_section:
-            content_sections.append(doc_section)
-
-        full_content = "\n\n".join(content_sections)
-
-        json_schema = get_json_schema()
-
-        prompt = f"""Analyze the following application and generate STRUCTURED JSON metadata for test fixture generation.
-
-Languages Detected: {languages_str}
+Languages: {languages_str}
 
 {full_content}
 
-Based on the code and documentation above, determine:
-1. What TYPE of application is this? (REST API, GraphQL, gRPC, WebSocket, CLI, Library, Message Queue, Serverless, Batch Script)
-2. What framework/technology stack is used?
-3. What are the connection details? (URLs, ports, protocols)
-4. What are the constraints? (auth requirements, env vars, external dependencies)
-5. Is there a database? What type?
-6. What are the testable components? (endpoints, commands, functions, etc.)
-
-OUTPUT REQUIREMENTS:
-- Return ONLY valid JSON matching the schema below
-- Include ONLY the relevant connection type and details based on app_type
-- If a field is not applicable or unknown, use null
-- For test_credentials, extract from documentation or code if available
-- For endpoints/commands/functions, list ALL discovered items
-
-JSON SCHEMA:
-{json_schema}
-
-EXAMPLES BY APP TYPE:
-
-For REST API:
+Return ONLY a JSON object with these fields:
 {{
-  "app_type": "rest_api",
-  "framework": "Flask",
-  "languages": ["python"],
-  "constraints": {{
-    "requires_auth": true,
-    "auth_type": "bearer",
-    "test_credentials": {{"username": "admin", "password": "admin123"}},
-    "required_env_vars": [],
-    "startup_time_seconds": 2
-  }},
-  "database": {{"type": "in-memory", "requires_cleanup": false}},
-  "http_connection": {{
-    "base_url": "http://localhost",
-    "port": 5050,
-    "protocol": "http",
-    "auth_endpoint": "/api/auth/login",
-    "health_endpoint": "/health"
-  }},
-  "rest_api_details": {{
-    "endpoints": [
-      {{"method": "GET", "path": "/health", "auth_required": false}},
-      {{"method": "POST", "path": "/api/users", "auth_required": false}}
-    ]
-  }}
+  "app_type": "rest_api" | "cli" | "grpc" | "graphql" | "websocket" | "library" | "message_queue" | "serverless",
+  "framework": "Flask" | "FastAPI" | "Express" | "Spring" | "none" | etc.,
+  "languages": ["python"] | ["rust"] | ["javascript"] | etc.,
+  "base_url": "http://localhost" (for web apps) or null,
+  "port": 5050 (extract from code/docs) or null,
+  "auth_required": true | false,
+  "test_credentials": {{"username": "...", "password": "..."}} (if found in docs) or null,
+  "health_endpoint": "/health" (if exists) or null
 }}
 
-For CLI Application:
-{{
-  "app_type": "cli",
-  "framework": "clap",
-  "languages": ["rust"],
-  "constraints": {{
-    "requires_auth": false,
-    "required_env_vars": ["DATABASE_URL"],
-    "startup_time_seconds": 0
-  }},
-  "cli_connection": {{
-    "executable_path": "./target/release/myapp",
-    "requires_build": true,
-    "build_command": "cargo build --release"
-  }},
-  "cli_details": {{
-    "commands": [
-      {{"name": "list", "args": [], "flags": ["--json", "--verbose"], "expected_exit_code": 0}},
-      {{"name": "add", "args": ["name"], "flags": ["--force"], "expected_exit_code": 0}}
-    ],
-    "supports_stdin": true
-  }}
-}}
-
-For Library/Module:
-{{
-  "app_type": "library",
-  "framework": "none",
-  "languages": ["python"],
-  "constraints": {{
-    "requires_auth": false,
-    "required_env_vars": []
-  }},
-  "library_connection": {{
-    "import_path": "mypackage.utils",
-    "exportable_functions": ["calculate_total", "validate_input"],
-    "exportable_classes": ["DataProcessor", "Validator"]
-  }},
-  "library_details": {{
-    "functions": [
-      {{"name": "calculate_total", "params": ["items", "tax_rate"], "return_type": "float", "is_async": false}},
-      {{"name": "validate_input", "params": ["data"], "return_type": "bool", "is_async": false}}
-    ],
-    "classes": [
-      {{"name": "DataProcessor", "methods": ["process", "transform"], "constructor_params": ["config"]}}
-    ]
-  }}
-}}
-
-For gRPC Service:
-{{
-  "app_type": "grpc",
-  "framework": "tonic",
-  "languages": ["rust"],
-  "constraints": {{
-    "requires_auth": false,
-    "required_env_vars": []
-  }},
-  "grpc_connection": {{
-    "host": "localhost",
-    "port": 50051,
-    "use_tls": false,
-    "proto_files": ["proto/service.proto"],
-    "service_names": ["UserService", "AuthService"]
-  }},
-  "grpc_details": {{
-    "services": [{{"name": "UserService", "methods": ["GetUser", "CreateUser", "ListUsers"]}}],
-    "methods": [
-      {{"name": "GetUser", "request_type": "GetUserRequest", "response_type": "User"}},
-      {{"name": "CreateUser", "request_type": "CreateUserRequest", "response_type": "User"}}
-    ]
-  }}
-}}
-
-Now analyze the provided code/documentation and generate the appropriate JSON metadata:"""
+IMPORTANT:
+- Extract the ACTUAL port from the code (look for app.run(port=...) or similar)
+- Extract test credentials if mentioned in documentation
+- Return ONLY valid JSON, no explanations"""
 
         messages = [
-            {"role": "system", "content": "You are an expert code analyst. Analyze applications of ANY type (REST API, CLI, Library, gRPC, GraphQL, WebSocket, Message Queue, Serverless) and output ONLY valid JSON metadata. Be precise about connection details, ports, and authentication requirements."},
+            {"role": "system", "content": "You are a code analyst. Output ONLY valid JSON, no markdown fences, no explanations."},
             {"role": "user", "content": prompt}
         ]
 
-        content = self._call_api(
+        logger.debug("Calling AI for metadata generation...")
+        raw_content = self._call_api(
             messages,
-            0.4,
+            0.3,
             config.MAX_TOKENS_ANALYSIS
         )
-
-        content = self._extract_json(content)
+        
+        logger.debug(f"Raw AI response for metadata: {raw_content[:500]}...")
+        
+        content = self._extract_json(raw_content)
+        logger.debug(f"Extracted JSON: {content[:500]}...")
 
         try:
             metadata = json.loads(content)
-            logger.info("Structured metadata generation complete")
+            
+            if not metadata.get("languages") and languages:
+                metadata["languages"] = languages
+            
+            if metadata.get("base_url") and metadata.get("port"):
+                metadata["http_connection"] = {
+                    "base_url": metadata.get("base_url"),
+                    "port": metadata.get("port"),
+                    "protocol": "https" if "https" in metadata.get("base_url", "") else "http",
+                    "health_endpoint": metadata.get("health_endpoint")
+                }
+            
+            logger.info(f"Metadata generation complete: app_type={metadata.get('app_type')}, port={metadata.get('port')}")
             return metadata
         except json.JSONDecodeError as e:
             logger.error(f"Failed to parse metadata JSON: {e}")
-            logger.debug(f"Raw content: {content}")
+            logger.error(f"Raw content was: {raw_content}")
             return {
                 "app_type": "rest_api",
                 "framework": "unknown",
-                "languages": languages,
-                "constraints": {"requires_auth": False, "required_env_vars": []},
+                "languages": languages if languages else [],
+                "base_url": "http://localhost",
+                "port": 8080,
+                "auth_required": False,
                 "http_connection": {"base_url": "http://localhost", "port": 8080, "protocol": "http"}
             }
-
-    def generate_tests(self, analysis_markdown: str, scenario: str, conftest_content: Optional[str] = None) -> str:
-        logger.info(f"Generating tests for scenario: {scenario[:50]}...")
-        
-        conftest_section = ""
-        if conftest_content:
-            conftest_section = f"""
-AVAILABLE FIXTURES FROM conftest.py - USE THESE:
-```python
-{conftest_content}
-```
-
-CRITICAL: You MUST use the fixtures defined above. Do NOT redefine fixtures that already exist in conftest.py.
-Simply use them as function parameters in your test functions.
-
-"""
-        
-        prompt = f"""Generate pytest tests for the following test scenario based on code analysis.
-
-NOTE: The application under test can be written in ANY language (Python, JavaScript, Java, Go, Rust, etc.), but tests are ALWAYS written in Python using pytest.
-
-Code Analysis:
-{analysis_markdown}
-
-Test Scenario to Implement:
-{scenario}
-{conftest_section}
-UNIVERSAL TEST BEST PRACTICES - MUST FOLLOW:
-
-1. TEST ISOLATION - Use unique identifiers for ALL test data:
-   ✅ CORRECT: username = f'user_{{uuid.uuid4().hex[:8]}}'
-   ❌ WRONG: username = 'testuser'
-
-2. FIXTURES - Use fixtures for setup/teardown:
-   ```python
-   @pytest.fixture
-   def unique_id():
-       return uuid.uuid4().hex[:8]
-   
-   @pytest.fixture
-   def test_user_data(unique_id):
-       return {{
-           'username': f'user_{{unique_id}}',
-           'email': f'user_{{unique_id}}@example.com',
-           'password': 'securepass123'
-       }}
-   ```
-
-3. CLEAR ASSERTIONS - Be specific with helpful messages:
-   ✅ CORRECT: assert response.status_code == 201, f"Expected 201, got {{response.status_code}}"
-   ✅ CORRECT: assert 'id' in data, "Response should contain user ID"
-   ❌ WRONG: assert response.status_code == 201
-
-4. APPLICATION TYPE PATTERNS:
-
-   REST API (any language):
-   ```python
-   import requests
-   
-   @pytest.fixture
-   def api_client():
-       session = requests.Session()
-       session.headers.update({{'Content-Type': 'application/json'}})
-       yield session
-       session.close()
-   
-   def test_api_endpoint(api_client):
-       response = api_client.get('http://localhost:8080/api/users')
-       assert response.status_code == 200
-   ```
-
-   CLI Application (any language):
-   ```python
-   import subprocess
-   
-   def test_cli_command():
-       result = subprocess.run(['./myapp', '--help'], capture_output=True, text=True)
-       assert result.returncode == 0
-       assert 'Usage:' in result.stdout
-   ```
-
-   Python Flask/FastAPI:
-   ```python
-   from myapp import create_app
-   
-   @pytest.fixture
-   def client():
-       app = create_app()
-       app.config['TESTING'] = True
-       with app.test_client() as client:
-           yield client
-   ```
-
-5. IMPORTS - Only import what actually exists:
-   - For Python apps: Import only modules/functions that are exportable
-   - For non-Python apps: Use HTTP clients (requests), subprocess, or appropriate client libraries
-   - ✅ CORRECT: from sample_api import create_app
-   - ❌ WRONG: from sample_api import create_user
-
-Requirements:
-- Generate complete, executable pytest tests
-- If conftest.py fixtures are provided above, USE THEM - do NOT redefine them
-- Only import fixtures by using them as test function parameters
-- ALWAYS use uuid.uuid4().hex[:8] for unique test data identifiers (or use unique_id fixture if available)
-- Choose appropriate testing approach based on application type:
-  * REST API → use requests/httpx for HTTP calls (or use api_client fixture if available)
-  * CLI → use subprocess for command execution (or use cli_runner fixture if available)
-  * Python app → import and test directly if applicable
-  * gRPC → use grpc client
-  * WebSocket → use websocket client
-- Use type hints for clarity
-- Follow pytest conventions
-- Make tests independent and reusable
-- Include necessary imports (uuid, pytest, requests/subprocess/etc.)
-- NO comments of any kind
-- NO docstrings of any kind
-- Code must be self-explanatory through clear naming
-- Return ONLY the Python code, no explanations
-
-UNIQUE SCENARIOS - CRITICAL:
-- Generate tests ONLY for the specific scenario provided above
-- Do NOT generate tests for other scenarios not mentioned
-- Each test function must test ONE distinct behavior
-- Do NOT duplicate test logic - if testing "create user", create ONE test function for it
-- Use descriptive function names that clearly indicate what is being tested
-
-Generate the complete test file:"""
-
-        messages = [
-            {"role": "system", "content": "You are an expert test automation engineer. Generate tests ONLY for the specific scenario provided. Do NOT duplicate tests or add extra scenarios. Each test must be unique. NO comments, NO docstrings."},
-            {"role": "user", "content": prompt}
-        ]
-        
-        result = self._call_api(
-            messages,
-            0.7,
-            config.MAX_TOKENS_GENERATION
-        )
-        
-        logger.debug("Test generation complete")
-        return result
 
     def generate_category_tests(
         self,
         analysis_markdown: str,
         category: str,
         scenarios: List[str],
-        conftest_content: Optional[str] = None
+        app_metadata: Dict = None
     ) -> str:
         logger.info(f"Generating {category} tests ({len(scenarios)} scenarios)...")
 
+        if app_metadata is None:
+            app_metadata = {}
+        
+        app_type, base_url, port = self._get_connection_info(app_metadata)
+        full_url = f"{base_url}:{port}"
+        
+        logger.info(f"Using app_type={app_type}, base_url={full_url}")
+
         scenarios_list = "\n".join([f"- {s}" for s in scenarios])
+        
+        test_template = self._get_test_template_for_app_type(app_type, full_url)
 
         prompt = f"""Generate a pytest test file with EXACTLY {len(scenarios)} SEPARATE test functions.
 
-API DOCUMENTATION (USE EXACT ENDPOINT PATHS FROM HERE):
+APPLICATION TYPE: {app_type.upper()}
+BASE URL: {full_url}
+
+ANALYSIS/DOCUMENTATION:
 {analysis_markdown}
 
-MANDATORY FILE STRUCTURE:
+{test_template}
+
+SCENARIOS TO IMPLEMENT (one test function per scenario):
+{scenarios_list}
+
+CRITICAL RULES:
+1. Create EXACTLY {len(scenarios)} SEPARATE test functions - one per scenario above
+2. DO NOT combine scenarios into a single test
+3. Each test function name: test_<descriptive_name>
+4. Each test is independent - creates its own data
+5. Use the fixtures defined in the template above
+6. NO comments, NO docstrings
+7. Keep each test focused on ONE scenario
+8. Use the EXACT BASE_URL provided: {full_url}
+9. Use EXACT endpoint paths from the documentation
+
+Generate the file with fixtures then {len(scenarios)} individual test functions:"""
+
+        messages = [
+            {"role": "system", "content": f"Generate EXACTLY {len(scenarios)} SEPARATE test functions for a {app_type} application. DO NOT combine them. Each scenario = one test function. NO comments."},
+            {"role": "user", "content": prompt}
+        ]
+
+        result = self._call_api(
+            messages,
+            0.7,
+            config.MAX_TOKENS_BATCH_HEALING
+        )
+
+        logger.debug(f"Category test generation complete for {category}")
+        return result
+
+    def _get_test_template_for_app_type(self, app_type: str, base_url: str) -> str:
+        templates = {
+            "rest_api": f"""MANDATORY FILE STRUCTURE FOR REST API:
 
 ```python
 import pytest
 import requests
 import uuid
 
-BASE_URL = "http://localhost:5050"
+BASE_URL = "{base_url}"
 
 @pytest.fixture
 def api_client():
@@ -621,41 +407,127 @@ def test_user_data():
         "email": f"user_{{uid}}@example.com",
         "password": f"securepass_{{uid}}"
     }}
-
-# Then {len(scenarios)} SEPARATE test functions below
 ```
+""",
+            "cli": f"""MANDATORY FILE STRUCTURE FOR CLI APPLICATION:
 
-SCENARIOS TO IMPLEMENT (one test function per scenario):
-{scenarios_list}
+```python
+import pytest
+import subprocess
+import uuid
+import os
 
-CRITICAL RULES:
-1. Create EXACTLY {len(scenarios)} SEPARATE test functions - one per scenario above
-2. DO NOT combine scenarios into a single test
-3. Each test function name: test_<descriptive_name>
-4. Each test is independent - creates its own data
-5. Use fixtures: api_client, api_base_url, test_user_data
-6. NO comments, NO docstrings
-7. Keep each test focused on ONE scenario
-8. **USE EXACT ENDPOINT PATHS FROM THE DOCUMENTATION ABOVE**
-   - If docs say "/api/users" use "/api/users" NOT "/users"
-   - If docs say "/api/auth/login" use "/api/auth/login" NOT "/login"
-   - DO NOT invent endpoints like "/register" - use what's documented
-
-Generate the file with fixtures then {len(scenarios)} individual test functions:"""
-
-        messages = [
-            {"role": "system", "content": f"Generate EXACTLY {len(scenarios)} SEPARATE test functions. DO NOT combine them. Each scenario = one test function. NO comments."},
-            {"role": "user", "content": prompt}
-        ]
-
-        result = self._call_api(
-            messages,
-            0.7,
-            config.MAX_TOKENS_BATCH_HEALING
+@pytest.fixture
+def cli_runner():
+    def _run(args, input_text=None, env=None):
+        full_env = os.environ.copy()
+        if env:
+            full_env.update(env)
+        result = subprocess.run(
+            args,
+            capture_output=True,
+            text=True,
+            input=input_text,
+            env=full_env
         )
-
-        logger.debug(f"Category test generation complete for {category}")
         return result
+    return _run
+
+@pytest.fixture
+def unique_id():
+    return uuid.uuid4().hex[:8]
+```
+""",
+            "grpc": f"""MANDATORY FILE STRUCTURE FOR gRPC SERVICE:
+
+```python
+import pytest
+import grpc
+import uuid
+
+@pytest.fixture
+def grpc_channel():
+    channel = grpc.insecure_channel("{base_url.replace('http://', '').replace('https://', '')}")
+    yield channel
+    channel.close()
+
+@pytest.fixture
+def unique_id():
+    return uuid.uuid4().hex[:8]
+```
+""",
+            "library": """MANDATORY FILE STRUCTURE FOR LIBRARY/MODULE:
+
+```python
+import pytest
+import uuid
+
+@pytest.fixture
+def unique_id():
+    return uuid.uuid4().hex[:8]
+
+@pytest.fixture
+def sample_data(unique_id):
+    return {
+        "id": unique_id,
+        "name": f"test_{unique_id}"
+    }
+```
+""",
+            "graphql": f"""MANDATORY FILE STRUCTURE FOR GraphQL API:
+
+```python
+import pytest
+import requests
+import uuid
+
+GRAPHQL_URL = "{base_url}/graphql"
+
+@pytest.fixture
+def graphql_client():
+    session = requests.Session()
+    session.headers.update({{"Content-Type": "application/json"}})
+    yield session
+    session.close()
+
+@pytest.fixture
+def execute_query(graphql_client):
+    def _execute(query, variables=None):
+        payload = {{"query": query}}
+        if variables:
+            payload["variables"] = variables
+        return graphql_client.post(GRAPHQL_URL, json=payload)
+    return _execute
+
+@pytest.fixture
+def unique_id():
+    return uuid.uuid4().hex[:8]
+```
+""",
+            "websocket": f"""MANDATORY FILE STRUCTURE FOR WebSocket APPLICATION:
+
+```python
+import pytest
+import websocket
+import json
+import uuid
+
+WS_URL = "{base_url.replace('http', 'ws')}/ws"
+
+@pytest.fixture
+def ws_connection():
+    ws = websocket.create_connection(WS_URL)
+    yield ws
+    ws.close()
+
+@pytest.fixture
+def unique_id():
+    return uuid.uuid4().hex[:8]
+```
+"""
+        }
+        
+        return templates.get(app_type, templates["rest_api"])
 
     def classify_failure(self, test_code: str, failure_info: dict) -> dict:
         logger.debug(f"Classifying failure for: {failure_info.get('nodeid', 'unknown')}")
@@ -718,10 +590,19 @@ Respond in JSON format:
                 "reason": "Failed to parse AI response"
             }
 
-    def heal_test(self, test_code: str, failure_info: dict) -> str:
+    def heal_test(self, test_code: str, failure_info: dict, app_metadata: Dict = None) -> str:
         logger.info(f"Healing test: {failure_info.get('nodeid', 'unknown')}")
         
-        prompt = f"""Fix this failing test:
+        if app_metadata is None:
+            app_metadata = {}
+        
+        app_type, base_url, port = self._get_connection_info(app_metadata)
+        
+        app_context = self._get_healing_context_for_app_type(app_type, f"{base_url}:{port}")
+        
+        prompt = f"""Fix this failing test for a {app_type.upper()} application.
+
+{app_context}
 
 Current Test Code:
 {test_code}
@@ -732,6 +613,8 @@ Failure Information:
 
 Requirements:
 - Fix the test error while maintaining test intent
+- Keep all fixture definitions in place (tests are self-contained)
+- Use the correct patterns for {app_type} applications
 - NO comments of any kind
 - NO docstrings of any kind
 - Use type hints
@@ -740,7 +623,7 @@ Requirements:
 Generate the fixed test code:"""
 
         messages = [
-            {"role": "system", "content": "You are an expert test automation engineer. Fix failing tests while maintaining their purpose. Generate clean code with NO comments and NO docstrings."},
+            {"role": "system", "content": f"You are an expert test automation engineer specializing in {app_type} applications. Fix failing tests while maintaining their purpose. Generate clean code with NO comments and NO docstrings."},
             {"role": "user", "content": prompt}
         ]
         
@@ -753,10 +636,50 @@ Generate the fixed test code:"""
         logger.debug("Test healing complete")
         return result
 
-    def fix_collection_error(self, test_file: str, test_code: str, error_message: str) -> str:
+    def _get_healing_context_for_app_type(self, app_type: str, base_url: str) -> str:
+        contexts = {
+            "rest_api": f"""APPLICATION CONTEXT:
+- This is a REST API test using requests library
+- BASE_URL should be: {base_url}
+- Use api_client fixture for HTTP requests
+- Use api_base_url fixture for the base URL""",
+            "graphql": f"""APPLICATION CONTEXT:
+- This is a GraphQL API test
+- GRAPHQL_URL should be: {base_url}/graphql
+- Use graphql_client fixture for requests
+- Use execute_query fixture for GraphQL queries""",
+            "cli": """APPLICATION CONTEXT:
+- This is a CLI application test using subprocess
+- Use cli_runner fixture to execute commands
+- Check exit codes and stdout/stderr""",
+            "grpc": f"""APPLICATION CONTEXT:
+- This is a gRPC service test
+- Use grpc_channel fixture for connections
+- Channel should connect to: {base_url.replace('http://', '').replace('https://', '')}""",
+            "websocket": f"""APPLICATION CONTEXT:
+- This is a WebSocket application test
+- WS_URL should be: {base_url.replace('http', 'ws')}/ws
+- Use ws_connection fixture for WebSocket connections""",
+            "library": """APPLICATION CONTEXT:
+- This is a library/module test
+- Import and test functions/classes directly
+- Use sample_data and unique_id fixtures for test data"""
+        }
+        return contexts.get(app_type, contexts["rest_api"])
+
+    def fix_collection_error(self, test_file: str, test_code: str, error_message: str, app_metadata: Dict = None) -> str:
         logger.info(f"Fixing collection error in: {test_file}")
         
-        prompt = f"""Fix this pytest collection error:
+        if app_metadata is None:
+            app_metadata = {}
+        
+        app_type, base_url, port = self._get_connection_info(app_metadata)
+        
+        app_context = self._get_healing_context_for_app_type(app_type, f"{base_url}:{port}")
+        
+        prompt = f"""Fix this pytest collection error for a {app_type.upper()} application.
+
+{app_context}
 
 Test File: {test_file}
 
@@ -770,8 +693,8 @@ Collection Error:
 
 Common Issues to Fix:
 1. ImportError: Trying to import functions that don't exist or aren't exportable
-   - Solution: Use Flask test client instead of importing route functions
-   - Example: Replace `from sample_api import create_user` with using `client.post('/api/users', ...)`
+   - Solution: Use proper test patterns for {app_type} applications
+   - Do NOT import application functions directly
 
 2. Syntax errors or invalid Python
    - Solution: Fix syntax issues
@@ -781,7 +704,8 @@ Common Issues to Fix:
 
 Requirements:
 - Fix the collection error while maintaining test intent
-- For Flask apps with app factory pattern, use test client instead of importing route functions
+- Use proper testing patterns for {app_type} applications
+- Keep all fixture definitions in place (tests are self-contained)
 - NO comments of any kind
 - NO docstrings of any kind
 - Use type hints where appropriate
@@ -790,7 +714,7 @@ Requirements:
 Generate the fixed test code:"""
 
         messages = [
-            {"role": "system", "content": "You are an expert test automation engineer. Fix pytest collection errors by analyzing import issues and using proper testing patterns. For Flask apps, use test client instead of importing route functions. Generate code with NO comments and NO docstrings."},
+            {"role": "system", "content": f"You are an expert test automation engineer specializing in {app_type} applications. Fix pytest collection errors using proper testing patterns. Generate code with NO comments and NO docstrings."},
             {"role": "user", "content": prompt}
         ]
         
@@ -800,15 +724,10 @@ Generate the fixed test code:"""
             config.MAX_TOKENS_HEALING
         )
         
-        if content.startswith("```python"):
-            content = content[9:]
-        if content.startswith("```"):
-            content = content[3:]
-        if content.endswith("```"):
-            content = content[:-3]
+        content = strip_markdown_fences(content)
         
         logger.debug("Collection error fix complete")
-        return content.strip()
+        return content
 
     def analyze_bug(self, defect_info: dict) -> str:
         logger.info(f"Analyzing bug: {defect_info.get('test_name', 'unknown')}")
@@ -848,339 +767,15 @@ Format as clear, actionable markdown.
         logger.debug("Bug analysis complete")
         return result
 
-    def generate_fixtures(self, analysis_markdown: str, best_practices: str) -> str:
-        return self.generate_fixtures_with_metadata(analysis_markdown, best_practices, "", "rest_api")
-
-    def generate_fixtures_with_metadata(
-        self, 
-        analysis_markdown: str, 
-        best_practices: str,
-        metadata_context: str,
-        app_type: str
-    ) -> str:
-        logger.info(f"Generating conftest.py fixtures for {app_type} application...")
-
-        app_type_fixtures = self._get_app_type_fixture_examples(app_type)
-
-        metadata_section = ""
-        if metadata_context:
-            metadata_section = f"""
-## STRUCTURED APPLICATION METADATA (USE THIS FOR PRECISE FIXTURE GENERATION):
-{metadata_context}
-
-IMPORTANT: Use the exact values from the metadata above (URLs, ports, credentials, etc.)
-"""
-        
-        prompt = f"""Generate pytest fixtures for conftest.py based on the application analysis and metadata.
-
-APPLICATION TYPE: {app_type.upper()}
-{metadata_section}
-
-Code Analysis:
-{analysis_markdown}
-
-Best Practices Reference (for patterns only):
-{best_practices}
-
-{app_type_fixtures}
-
-CRITICAL REQUIREMENTS:
-
-1. IMPORTS - MUST include ALL necessary imports at the very top:
-   - import pytest
-   - import uuid (if generating unique data)
-   - import requests (for REST APIs)
-   - import subprocess (for CLI applications)
-   - import grpc (for gRPC services)
-   - import websocket (for WebSocket applications)
-   - Any other imports needed by your fixtures
-   - VERIFY every module you use is imported
-
-2. NO HARDCODED TEST DATA - CRITICAL:
-   - NEVER use hardcoded usernames like "testuser" or "admin"
-   - NEVER use hardcoded emails like "test@example.com"
-   - ALWAYS generate unique data using uuid.uuid4().hex[:8]
-   - Example: f"user_{{uuid.uuid4().hex[:8]}}" for usernames
-   - Example: f"user_{{uuid.uuid4().hex[:8]}}@example.com" for emails
-
-3. USE METADATA VALUES:
-   - Use exact base_url and port from metadata
-   - Use auth_endpoint path from metadata if auth is required
-   - Use test_credentials from metadata for authenticated fixtures
-   - Create fixtures matching the app_type (CLI runner, gRPC channel, etc.)
-
-4. APP-TYPE SPECIFIC FIXTURES:
-   - REST API: api_client, api_base_url, authenticated_client
-   - CLI: cli_runner, cli_executable, working_directory
-   - gRPC: grpc_channel, grpc_stub
-   - WebSocket: ws_connection, ws_url
-   - Library: module imports, function references
-   - GraphQL: graphql_client, graphql_url, graphql_query helper
-   - Message Queue: connection, channel, queue fixtures
-
-5. Include cleanup/teardown using yield where appropriate
-
-6. CODE STYLE - CRITICAL:
-   - NO comments of any kind
-   - NO docstrings of any kind
-   - NO inline comments
-   - Code must be self-explanatory through clear naming
-
-7. Return ONLY the Python code, no explanations or markdown formatting
-
-Generate fixtures with ALL imports and NO hardcoded data:"""
-
-        messages = [
-            {"role": "system", "content": f"You are an expert test automation engineer specializing in {app_type} applications. Generate pytest fixtures that match the exact application type and use precise values from the provided metadata. CRITICAL: 1) Include ALL imports at the top. 2) NEVER use hardcoded data - always use uuid for unique values. 3) NO comments, NO docstrings."},
-            {"role": "user", "content": prompt}
-        ]
-        
-        result = self._call_api(
-            messages,
-            0.5,
-            config.MAX_TOKENS_GENERATION
-        )
-        
-        logger.info("Fixture generation complete")
-        return result
-
-    def _get_app_type_fixture_examples(self, app_type: str) -> str:
-        examples = {
-            "rest_api": """
-## REST API FIXTURE EXAMPLES:
-```python
-import pytest
-import requests
-import uuid
-
-@pytest.fixture
-def api_base_url():
-    return "http://localhost:5050"  # Use actual port from metadata
-
-@pytest.fixture
-def api_client():
-    session = requests.Session()
-    session.headers.update({"Content-Type": "application/json"})
-    yield session
-    session.close()
-
-@pytest.fixture
-def authenticated_client(api_client, api_base_url):
-    # Use test_credentials from metadata
-    response = api_client.post(f"{api_base_url}/api/auth/login", json={
-        "username": "admin",  # From metadata
-        "password": "admin123"  # From metadata
-    })
-    token = response.json().get("token")
-    api_client.headers.update({"Authorization": f"Bearer {token}"})
-    return api_client
-```
-""",
-            "cli": """
-## CLI APPLICATION FIXTURE EXAMPLES:
-```python
-import pytest
-import subprocess
-import uuid
-import os
-
-@pytest.fixture
-def cli_executable():
-    return "./target/release/myapp"  # Use actual path from metadata
-
-@pytest.fixture
-def cli_runner():
-    def _run_command(args, input_text=None, env=None):
-        full_env = os.environ.copy()
-        if env:
-            full_env.update(env)
-        result = subprocess.run(
-            args,
-            capture_output=True,
-            text=True,
-            input=input_text,
-            env=full_env
-        )
-        return result
-    return _run_command
-
-@pytest.fixture
-def unique_id():
-    return uuid.uuid4().hex[:8]
-```
-""",
-            "grpc": """
-## gRPC SERVICE FIXTURE EXAMPLES:
-```python
-import pytest
-import grpc
-import uuid
-
-@pytest.fixture
-def grpc_channel():
-    channel = grpc.insecure_channel("localhost:50051")  # Use port from metadata
-    yield channel
-    channel.close()
-
-@pytest.fixture
-def grpc_stub(grpc_channel):
-    # Import the generated stub - adjust based on proto files in metadata
-    from generated import service_pb2_grpc
-    return service_pb2_grpc.MyServiceStub(grpc_channel)
-
-@pytest.fixture
-def unique_id():
-    return uuid.uuid4().hex[:8]
-```
-""",
-            "websocket": """
-## WEBSOCKET APPLICATION FIXTURE EXAMPLES:
-```python
-import pytest
-import websocket
-import json
-import uuid
-
-@pytest.fixture
-def ws_url():
-    return "ws://localhost:8080/ws"  # Use actual URL from metadata
-
-@pytest.fixture
-def ws_connection(ws_url):
-    ws = websocket.create_connection(ws_url)
-    yield ws
-    ws.close()
-
-@pytest.fixture
-def ws_send_receive():
-    def _send_receive(ws, message):
-        ws.send(json.dumps(message))
-        return json.loads(ws.recv())
-    return _send_receive
-```
-""",
-            "graphql": """
-## GRAPHQL API FIXTURE EXAMPLES:
-```python
-import pytest
-import requests
-import uuid
-
-@pytest.fixture
-def graphql_url():
-    return "http://localhost:4000/graphql"  # Use actual URL from metadata
-
-@pytest.fixture
-def graphql_client():
-    session = requests.Session()
-    session.headers.update({"Content-Type": "application/json"})
-    yield session
-    session.close()
-
-@pytest.fixture
-def graphql_query():
-    def _execute_query(client, url, query, variables=None):
-        payload = {"query": query}
-        if variables:
-            payload["variables"] = variables
-        return client.post(url, json=payload)
-    return _execute_query
-```
-""",
-            "library": """
-## LIBRARY/MODULE FIXTURE EXAMPLES:
-```python
-import pytest
-import uuid
-
-# Import the module/package being tested - adjust based on import_path from metadata
-# from mypackage import MyClass, my_function
-
-@pytest.fixture
-def unique_id():
-    return uuid.uuid4().hex[:8]
-
-@pytest.fixture
-def sample_data(unique_id):
-    return {
-        "id": unique_id,
-        "name": f"test_{unique_id}"
-    }
-
-# Add fixtures for common test data structures used by library functions
-```
-""",
-            "message_queue": """
-## MESSAGE QUEUE FIXTURE EXAMPLES:
-```python
-import pytest
-import pika
-import json
-import uuid
-
-@pytest.fixture
-def rabbitmq_connection():
-    connection = pika.BlockingConnection(
-        pika.ConnectionParameters("localhost")  # Use broker_url from metadata
-    )
-    yield connection
-    connection.close()
-
-@pytest.fixture
-def rabbitmq_channel(rabbitmq_connection):
-    channel = rabbitmq_connection.channel()
-    yield channel
-    channel.close()
-
-@pytest.fixture
-def test_queue(rabbitmq_channel, unique_id):
-    queue_name = f"test_queue_{unique_id}"
-    rabbitmq_channel.queue_declare(queue=queue_name, auto_delete=True)
-    yield queue_name
-
-@pytest.fixture
-def unique_id():
-    return uuid.uuid4().hex[:8]
-```
-""",
-            "serverless": """
-## SERVERLESS FUNCTION FIXTURE EXAMPLES:
-```python
-import pytest
-import requests
-import json
-import uuid
-
-@pytest.fixture
-def function_url():
-    # Use the deployed function URL or local emulator
-    return "http://localhost:3000"
-
-@pytest.fixture
-def invoke_function():
-    def _invoke(url, event_data):
-        response = requests.post(url, json=event_data)
-        return response
-    return _invoke
-
-@pytest.fixture
-def unique_id():
-    return uuid.uuid4().hex[:8]
-
-@pytest.fixture
-def sample_event(unique_id):
-    return {
-        "requestContext": {"requestId": unique_id},
-        "body": json.dumps({"test": True})
-    }
-```
-"""
-        }
-        
-        return examples.get(app_type, examples.get("rest_api", ""))
-
-    def validate_tests(self, test_files: Dict[str, str], conftest_code: str = "") -> dict:
+    def validate_tests(self, test_files: Dict[str, str], app_metadata: Dict = None) -> dict:
         logger.info("Validating generated tests with AI reviewer...")
+
+        if app_metadata is None:
+            app_metadata = {}
+        
+        app_type, base_url, port = self._get_connection_info(app_metadata)
+        
+        logger.info(f"Validating for app_type={app_type}, port={port}")
 
         serialized_tests = "\n\n".join(
             f"### {path}\n```python\n{code}\n```" for path, code in test_files.items()
@@ -1188,22 +783,25 @@ def sample_event(unique_id):
 
         prompt = f"""You are auditing generated pytest test files. Focus ONLY on issues that will cause test FAILURES.
 
-IMPORTANT: These tests are SELF-CONTAINED. Each file has its own fixtures (api_client, api_base_url, test_user_data).
+APPLICATION TYPE: {app_type.upper()}
+EXPECTED BASE URL: {base_url}:{port}
+
+IMPORTANT: These tests are SELF-CONTAINED. Each file has its own fixtures.
 This is INTENTIONAL - do NOT flag fixture definitions as issues.
 
 Generated tests:
 {serialized_tests}
 
 CRITICAL ISSUES TO CHECK (these cause test failures):
-1. Missing imports (pytest, requests, uuid, etc.)
+1. Missing imports (pytest, requests, uuid, subprocess, etc.)
 2. Syntax errors or invalid Python
-3. Using wrong port (should be 5050)
+3. Using wrong port (expected: {port})
 4. Tests using fixtures that are not defined in the same file
 5. Missing fixture decorators (@pytest.fixture)
 
 IGNORE these (they are NOT issues):
-- Each file defining its own fixtures (api_client, api_base_url, test_user_data) - THIS IS CORRECT
-- BASE_URL constant at module level - THIS IS CORRECT
+- Each file defining its own fixtures - THIS IS CORRECT
+- BASE_URL or similar constants at module level - THIS IS CORRECT
 - Test naming conventions
 - Minor overlaps between test scenarios
 
@@ -1222,7 +820,7 @@ Respond in JSON:
 Return "pass" if tests are syntactically correct and self-contained. Only fail for actual errors."""
 
         messages = [
-            {"role": "system", "content": "You are an expert pytest reviewer. Identify duplicate scenarios and best-practice violations. Return ONLY valid JSON, no markdown."},
+            {"role": "system", "content": f"You are an expert pytest reviewer for {app_type} applications. Check for syntax and import issues. Return ONLY valid JSON, no markdown."},
             {"role": "user", "content": prompt}
         ]
 
@@ -1245,18 +843,18 @@ Return "pass" if tests are syntactically correct and self-contained. Only fail f
             logger.warning("AI test validation failed: %s", exc)
             return {"status": "error", "issues": [{"type": "exception", "detail": str(exc)}]}
 
-    def heal_tests(self, test_files: Dict[str, str], conftest_code: str, issues: List[Dict]) -> Dict[str, str]:
+    def heal_tests(self, test_files: Dict[str, str], issues: List[Dict]) -> Dict[str, str]:
         logger.info("Healing generated tests via AI...")
 
-        healed_result = self._heal_tests_batch(test_files, conftest_code, issues)
+        healed_result = self._heal_tests_batch(test_files, issues)
         
         if healed_result:
             return healed_result
         
         logger.info("Batch healing failed, trying individual file healing...")
-        return self._heal_tests_individually(test_files, conftest_code, issues)
+        return self._heal_tests_individually(test_files, issues)
 
-    def _heal_tests_batch(self, test_files: Dict[str, str], conftest_code: str, issues: List[Dict]) -> Dict[str, str]:
+    def _heal_tests_batch(self, test_files: Dict[str, str], issues: List[Dict]) -> Dict[str, str]:
         serialized_tests = "\n\n".join(
             f"### {path}\n```python\n{code}\n```" for path, code in test_files.items()
         )
@@ -1264,10 +862,8 @@ Return "pass" if tests are syntactically correct and self-contained. Only fail f
 
         prompt = f"""You must FIX the generated pytest test files below.
 
-Fixtures available from conftest.py:
-```python
-{conftest_code}
-```
+IMPORTANT: These tests are SELF-CONTAINED. Each file has its own fixtures defined at the top.
+Do NOT remove fixture definitions - they are intentional.
 
 Current tests:
 {serialized_tests}
@@ -1276,9 +872,9 @@ Issues detected:
 {issues_text}
 
 Requirements:
-- Resolve duplicate scenarios and enforce unique test coverage
-- Ensure tests use fixtures from conftest.py instead of redefining setup
-- Replace any hardcoded test data with uuid-based values or fixture outputs
+- Fix the specific issues listed above
+- Keep all fixture definitions in place (tests are self-contained)
+- Replace any hardcoded test data with uuid-based values
 - Keep imports minimal and valid
 - Preserve descriptive test names
 - NO comments, NO docstrings
@@ -1289,7 +885,7 @@ Only return JSON. Do not include markdown fences or additional text.
 """
 
         messages = [
-            {"role": "system", "content": "You are an expert pytest engineer. Fix the provided tests to resolve all validation issues. Return ONLY valid JSON."},
+            {"role": "system", "content": "You are an expert pytest engineer. Fix the provided self-contained tests to resolve validation issues. Return ONLY valid JSON."},
             {"role": "user", "content": prompt}
         ]
 
@@ -1313,7 +909,7 @@ Only return JSON. Do not include markdown fences or additional text.
             logger.warning("AI batch test healing failed: %s", exc)
             return {}
 
-    def _heal_tests_individually(self, test_files: Dict[str, str], conftest_code: str, issues: List[Dict]) -> Dict[str, str]:
+    def _heal_tests_individually(self, test_files: Dict[str, str], issues: List[Dict]) -> Dict[str, str]:
         healed_files = {}
         
         for filepath, code in test_files.items():
@@ -1325,10 +921,8 @@ Only return JSON. Do not include markdown fences or additional text.
             
             prompt = f"""Fix this pytest test file.
 
-Fixtures available from conftest.py:
-```python
-{conftest_code}
-```
+IMPORTANT: This test is SELF-CONTAINED with its own fixtures defined at the top.
+Do NOT remove fixture definitions - they are intentional.
 
 Current test file ({filepath}):
 ```python
@@ -1339,22 +933,15 @@ Issues to fix:
 {json.dumps(file_issues, indent=2)}
 
 CRITICAL REQUIREMENTS:
-1. ALL API calls MUST use api_base_url fixture:
-   WRONG: api_client.get("/api/users")
-   WRONG: api_client.get("http://localhost:5000/api/users")
-   CORRECT: api_client.get(f"{{api_base_url}}/api/users")
-
-2. Add api_base_url to function parameters if not present:
-   WRONG: def test_something(api_client):
-   CORRECT: def test_something(api_client, api_base_url):
-
-3. Use fixtures from conftest.py - do NOT redefine them
+1. Keep all fixture definitions in place
+2. ALL API calls MUST use the api_base_url fixture defined in this file
+3. Replace any hardcoded test data with uuid-based values
 4. NO comments, NO docstrings
 5. Return ONLY the fixed Python code
 """
 
             messages = [
-                {"role": "system", "content": "You are an expert pytest engineer. Fix the test file. Return ONLY Python code."},
+                {"role": "system", "content": "You are an expert pytest engineer. Fix the self-contained test file. Return ONLY Python code."},
                 {"role": "user", "content": prompt}
             ]
 
@@ -1365,14 +952,8 @@ CRITICAL REQUIREMENTS:
                     config.MAX_TOKENS_HEALING
                 )
                 
-                if response.startswith("```python"):
-                    response = response[9:]
-                if response.startswith("```"):
-                    response = response[3:]
-                if response.endswith("```"):
-                    response = response[:-3]
-                
-                healed_files[filepath] = response.strip()
+                response = strip_markdown_fences(response)
+                healed_files[filepath] = response
             except Exception as exc:  # pylint: disable=broad-except
                 logger.warning(f"Failed to heal {filepath}: {exc}")
         
@@ -1400,8 +981,7 @@ Create a detailed markdown report with:
    - Actual Defects (Requiring Investigation) - with detailed analysis
 5. Self-Healing Actions Taken
 6. Bug Report Summary (if actual defects found)
-7. Commit Status (allowed or blocked)
-8. Recommendations
+7. Recommendations
 
 Format as markdown with clear sections and bullet points.
 """

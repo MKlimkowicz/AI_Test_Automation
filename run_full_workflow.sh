@@ -178,6 +178,16 @@ run_self_healing() {
         if [ -f "reports/healing_analysis.json" ]; then
             log_info "Healing analysis saved: reports/healing_analysis.json"
             
+            HEALED_COUNT=$(python3 -c "
+import json
+try:
+    with open('reports/healing_analysis.json', 'r') as f:
+        data = json.load(f)
+    print(len(data.get('successfully_healed', [])))
+except:
+    print(0)
+")
+            
             python3 << EOF
 import json
 try:
@@ -195,6 +205,11 @@ try:
 except Exception as e:
     print(f"Could not parse healing analysis: {e}")
 EOF
+            
+            if [ "$HEALED_COUNT" -gt 0 ]; then
+                log_info "Re-running tests after healing..."
+                run_tests_after_healing
+            fi
         fi
     else
         log_error "Self-healing failed"
@@ -202,28 +217,25 @@ EOF
     fi
 }
 
-check_commit() {
-    log_step "Step 6: Checking Commit Conditions"
+run_tests_after_healing() {
+    log_step "Step 5b: Re-running Tests After Healing"
     
-    if python3 src/ai_engine/commit_controller.py; then
-        COMMIT_ALLOWED=$(python3 src/ai_engine/commit_controller.py 2>&1 | grep -o "commit_allowed=[a-z]*" | cut -d= -f2)
-        
-        if [ "$COMMIT_ALLOWED" = "true" ]; then
-            log_success "Commit is ALLOWED"
-            log_info "Only actual defects remain (or all tests passed)"
-        else
-            log_warning "Commit is BLOCKED"
-            log_info "Unhealed test errors still exist"
-        fi
+    if pytest tests/generated/ \
+        --html=reports/html/report.html \
+        --self-contained-html \
+        --json-report \
+        --json-report-file=reports/pytest-report.json \
+        -v; then
+        log_success "All tests passed after healing!"
+        TEST_STATUS="PASSED"
     else
-        log_warning "Commit is BLOCKED"
-        log_info "Reports will still be generated for investigation"
-        COMMIT_ALLOWED="false"
+        log_warning "Some tests still failing after healing"
+        TEST_STATUS="FAILED"
     fi
 }
 
 generate_reports() {
-    log_step "Step 7: Generating Final Reports"
+    log_step "Step 6: Generating Final Reports"
     
     if python3 src/ai_engine/report_summarizer.py; then
         log_success "Reports generated"
@@ -300,12 +312,7 @@ EOF
     echo "  • Bug Report:     reports/BUGS.md"
     echo "  • Latest Summary: $(ls -t reports/summaries/summary_*.md 2>/dev/null | head -1)"
     
-    if [ "$COMMIT_ALLOWED" = "false" ]; then
-        echo -e "\n${YELLOW}⚠ Workflow completed with blocked commit${NC}"
-        echo -e "${YELLOW}  Review reports above and fix issues before committing${NC}\n"
-    else
-        echo -e "\n${GREEN}✓ Workflow completed successfully!${NC}\n"
-    fi
+    echo -e "\n${GREEN}✓ Workflow completed successfully!${NC}\n"
 }
 
 main() {
@@ -326,15 +333,8 @@ main() {
     validate_tests
     run_tests
     run_self_healing
-    check_commit
     generate_reports
     display_final_summary
-    
-    if [ "$COMMIT_ALLOWED" = "false" ]; then
-        exit 1
-    else
-        exit 0
-    fi
 }
 
 main

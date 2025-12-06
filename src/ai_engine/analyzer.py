@@ -10,6 +10,7 @@ from utils.ai_client import AIClient
 from utils.config import config
 from utils.logger import get_logger
 from utils.app_metadata import AppMetadata
+from utils.helpers import strip_markdown_fences
 
 logger = get_logger(__name__)
 
@@ -265,14 +266,7 @@ No code or documentation files found in the app directory.
     
     client = AIClient()
     analysis_md = client.analyze_code_and_docs(code_files, doc_files, detected_languages)
-    
-    if analysis_md.startswith("```markdown"):
-        analysis_md = analysis_md[11:]
-    if analysis_md.startswith("```"):
-        analysis_md = analysis_md[3:]
-    if analysis_md.endswith("```"):
-        analysis_md = analysis_md[:-3]
-    analysis_md = analysis_md.strip()
+    analysis_md = strip_markdown_fences(analysis_md)
     
     project_root = config.get_project_root()
     output_path = project_root / "reports" / "analysis.md"

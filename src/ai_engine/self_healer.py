@@ -8,12 +8,37 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from utils.ai_client import AIClient
 from utils.config import config
 from utils.logger import get_logger
+from utils.helpers import strip_markdown_fences
 from ai_engine.test_runner import run_single_test
 
 logger = get_logger(__name__)
 
 
-def heal_collection_errors(report_data: Dict, project_root: Path, client: AIClient) -> Dict:
+def load_app_metadata(project_root: Path) -> Dict:
+    metadata_path = project_root / "reports" / "app_metadata.json"
+    
+    if metadata_path.exists():
+        try:
+            with open(metadata_path, "r") as f:
+                metadata = json.load(f)
+            logger.info(f"Loaded app metadata: app_type={metadata.get('app_type')}, port={metadata.get('port')}")
+            return metadata
+        except json.JSONDecodeError as e:
+            logger.warning(f"Failed to parse app_metadata.json: {e}")
+    else:
+        logger.warning(f"No app_metadata.json found at {metadata_path}")
+    
+    return {
+        "app_type": "rest_api",
+        "framework": "unknown",
+        "languages": [],
+        "base_url": "http://localhost",
+        "port": 8080,
+        "auth_required": False
+    }
+
+
+def heal_collection_errors(report_data: Dict, project_root: Path, client: AIClient, app_metadata: Dict = None) -> Dict:
     collectors = report_data.get("collectors", [])
     failed_collectors = [c for c in collectors if c.get("outcome") == "failed"]
     
@@ -23,6 +48,9 @@ def heal_collection_errors(report_data: Dict, project_root: Path, client: AIClie
             "collection_errors_fixed": 0,
             "collection_errors_remaining": 0
         }
+    
+    if app_metadata is None:
+        app_metadata = {}
     
     logger.info("=" * 80)
     logger.info("COLLECTION ERROR HEALING")
@@ -56,7 +84,8 @@ def heal_collection_errors(report_data: Dict, project_root: Path, client: AIClie
             fixed_code = client.fix_collection_error(
                 test_file=str(test_file),
                 test_code=test_code,
-                error_message=error_msg
+                error_message=error_msg,
+                app_metadata=app_metadata
             )
             
             if fixed_code and fixed_code.strip() != test_code.strip():
@@ -112,6 +141,9 @@ def heal_failed_tests(json_report_path: str, max_attempts: int = None) -> Dict:
     project_root = config.get_project_root()
     report_path = project_root / json_report_path
     
+    app_metadata = load_app_metadata(project_root)
+    logger.info(f"Healing with app_type={app_metadata.get('app_type')}, port={app_metadata.get('port')}")
+    
     if not report_path.exists():
         logger.warning(f"Report file not found: {report_path}")
         result = {
@@ -120,8 +152,7 @@ def heal_failed_tests(json_report_path: str, max_attempts: int = None) -> Dict:
             "max_attempts_exceeded": [],
             "healed_count": 0,
             "defect_count": 0,
-            "exceeded_count": 0,
-            "commit_allowed": True
+            "exceeded_count": 0
         }
         
         healing_report_path = project_root / "reports" / "healing_analysis.json"
@@ -136,7 +167,7 @@ def heal_failed_tests(json_report_path: str, max_attempts: int = None) -> Dict:
     with open(report_path, "r") as f:
         report_data = json.load(f)
     
-    collection_healing = heal_collection_errors(report_data, project_root, client)
+    collection_healing = heal_collection_errors(report_data, project_root, client, app_metadata)
     
     if collection_healing["collection_errors_fixed"] > 0:
         logger.info("=" * 80)
@@ -173,8 +204,7 @@ def heal_failed_tests(json_report_path: str, max_attempts: int = None) -> Dict:
             "max_attempts_exceeded": [],
             "healed_count": 0,
             "defect_count": 0,
-            "exceeded_count": 0,
-            "commit_allowed": True
+            "exceeded_count": 0
         }
         
         healing_report_path = project_root / "reports" / "healing_analysis.json"
@@ -241,15 +271,8 @@ def heal_failed_tests(json_report_path: str, max_attempts: int = None) -> Dict:
                 attempts += 1
                 logger.info(f"Attempt {attempts}/{max_attempts}: Healing test...")
                 
-                healed_code = client.heal_test(test_code, test)
-                
-                if healed_code.startswith("```python"):
-                    healed_code = healed_code[9:]
-                if healed_code.startswith("```"):
-                    healed_code = healed_code[3:]
-                if healed_code.endswith("```"):
-                    healed_code = healed_code[:-3]
-                healed_code = healed_code.strip()
+                healed_code = client.heal_test(test_code, test, app_metadata)
+                healed_code = strip_markdown_fences(healed_code)
                 
                 with open(test_filepath, "w") as f:
                     f.write(healed_code)
@@ -317,8 +340,6 @@ def heal_failed_tests(json_report_path: str, max_attempts: int = None) -> Dict:
                     "last_error": rerun_result.get("error", "Unknown error") if rerun_result else test.get("call", {}).get("longrepr", "N/A")
                 })
     
-    commit_allowed = len(max_attempts_exceeded) == 0
-    
     result = {
         "successfully_healed": successfully_healed,
         "actual_defects": actual_defects,
@@ -326,7 +347,6 @@ def heal_failed_tests(json_report_path: str, max_attempts: int = None) -> Dict:
         "healed_count": len(successfully_healed),
         "defect_count": len(actual_defects),
         "exceeded_count": len(max_attempts_exceeded),
-        "commit_allowed": commit_allowed,
         "collection_errors": collection_healing
     }
     
@@ -351,12 +371,6 @@ def heal_failed_tests(json_report_path: str, max_attempts: int = None) -> Dict:
     logger.info(f"  Successfully Healed: {result['healed_count']}")
     logger.info(f"  Actual Defects (Need Investigation): {result['defect_count']}")
     logger.info(f"  Max Attempts Exceeded: {result['exceeded_count']}")
-    
-    if commit_allowed:
-        logger.info("Commit Allowed: YES")
-    else:
-        logger.warning("Commit Allowed: NO")
-        logger.warning(f"  Reason: {result['exceeded_count']} test(s) still failing after max healing attempts")
     
     logger.info(f"Report saved to: {healing_report_path}")
     logger.info("=" * 80)

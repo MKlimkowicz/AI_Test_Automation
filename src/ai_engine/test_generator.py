@@ -1,13 +1,14 @@
 import sys
 import re
+import json
 from pathlib import Path
 from typing import List, Tuple, Optional, Dict
-from concurrent.futures import ThreadPoolExecutor, as_completed
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from utils.ai_client import AIClient
 from utils.config import config
 from utils.logger import get_logger
+from utils.helpers import strip_markdown_fences
 
 logger = get_logger(__name__)
 
@@ -18,30 +19,6 @@ CATEGORY_FILE_MAP = {
     "Performance": "test_performance.py",
     "Integration": "test_integration.py",
 }
-
-
-def read_conftest(conftest_path: Path) -> Optional[str]:
-    if not conftest_path.exists():
-        logger.warning(f"Conftest file not found at {conftest_path}")
-        return None
-    
-    with open(conftest_path, "r") as f:
-        content = f.read()
-    
-    if not content.strip():
-        logger.warning("Conftest file is empty")
-        return None
-    
-    return content
-
-
-def extract_test_scenarios(analysis_md: str) -> List[str]:
-    grouped = extract_scenarios_by_category(analysis_md)
-    scenarios = []
-    for category, items in grouped.items():
-        for item in items:
-            scenarios.append(f"[{category}] {item}")
-    return scenarios
 
 
 def extract_scenarios_by_category(analysis_md: str) -> Dict[str, List[str]]:
@@ -107,23 +84,13 @@ def extract_scenarios_by_category(analysis_md: str) -> Dict[str, List[str]]:
     return scenarios_by_category
 
 
-def _clean_test_code(test_code: str) -> str:
-    if test_code.startswith("```python"):
-        test_code = test_code[9:]
-    if test_code.startswith("```"):
-        test_code = test_code[3:]
-    if test_code.endswith("```"):
-        test_code = test_code[:-3]
-    return test_code.strip()
-
-
 def _generate_category_tests(
     client: AIClient,
     category: str,
     scenarios: List[str],
     analysis_markdown: str,
     output_path: Path,
-    conftest_content: Optional[str] = None
+    app_metadata: Dict
 ) -> Tuple[str, Optional[str]]:
     try:
         filename = CATEGORY_FILE_MAP.get(category, f"test_{category.lower()}.py")
@@ -132,10 +99,10 @@ def _generate_category_tests(
         test_code = client.generate_category_tests(
             analysis_markdown, 
             category, 
-            scenarios, 
-            conftest_content
+            scenarios,
+            app_metadata
         )
-        test_code = _clean_test_code(test_code)
+        test_code = strip_markdown_fences(test_code)
         
         test_filepath = output_path / filename
         
@@ -154,8 +121,7 @@ def generate_tests_by_category(
     scenarios_by_category: Dict[str, List[str]],
     analysis_markdown: str,
     output_path: Path,
-    conftest_content: Optional[str] = None,
-    parallel: bool = False
+    app_metadata: Dict
 ) -> List[str]:
     client = AIClient()
     generated_files = []
@@ -163,11 +129,12 @@ def generate_tests_by_category(
     
     logger.info(f"Generating {len(scenarios_by_category)} category files sequentially...")
     logger.info(f"Categories to generate: {list(scenarios_by_category.keys())}")
+    logger.info(f"Using app_type={app_metadata.get('app_type')}, port={app_metadata.get('port')}")
     
     for category, scenarios in scenarios_by_category.items():
         logger.info(f"Processing category: {category} ({len(scenarios)} scenarios)")
         cat, filepath = _generate_category_tests(
-            client, category, scenarios, analysis_markdown, output_path, conftest_content
+            client, category, scenarios, analysis_markdown, output_path, app_metadata
         )
         if filepath:
             generated_files.append(filepath)
@@ -184,11 +151,33 @@ def generate_tests_by_category(
     return generated_files
 
 
+def load_app_metadata(project_root: Path) -> Dict:
+    metadata_path = project_root / "reports" / "app_metadata.json"
+    
+    if metadata_path.exists():
+        try:
+            with open(metadata_path, "r") as f:
+                metadata = json.load(f)
+            logger.info(f"Loaded app metadata: app_type={metadata.get('app_type')}, port={metadata.get('port')}")
+            return metadata
+        except json.JSONDecodeError as e:
+            logger.warning(f"Failed to parse app_metadata.json: {e}")
+    else:
+        logger.warning(f"No app_metadata.json found at {metadata_path}")
+    
+    return {
+        "app_type": "rest_api",
+        "framework": "unknown",
+        "languages": [],
+        "base_url": "http://localhost",
+        "port": 8080,
+        "auth_required": False
+    }
+
+
 def generate_tests(
     analysis_md_path: str = None,
-    output_dir: str = None,
-    parallel: bool = True,
-    conftest_path: str = None
+    output_dir: str = None
 ) -> List[str]:
     project_root = config.get_project_root()
     
@@ -208,9 +197,12 @@ def generate_tests(
     with open(analysis_path, "r") as f:
         analysis_markdown = f.read()
     
+    app_metadata = load_app_metadata(project_root)
+    
     logger.info(f"Reading analysis from: {analysis_path}")
     logger.info(f"Analysis size: {len(analysis_markdown)} characters")
-    logger.info("Generating self-contained tests (no conftest dependency)")
+    logger.info(f"Using app metadata: {app_metadata.get('app_type')}, port={app_metadata.get('port')}")
+    logger.info("Generating self-contained tests")
     
     scenarios_by_category = extract_scenarios_by_category(analysis_markdown)
     
@@ -228,8 +220,7 @@ def generate_tests(
         scenarios_by_category,
         analysis_markdown,
         output_path,
-        conftest_content=None,
-        parallel=parallel
+        app_metadata
     )
     
     return generated_files
