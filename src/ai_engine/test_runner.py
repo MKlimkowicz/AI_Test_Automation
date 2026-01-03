@@ -6,6 +6,9 @@ from typing import Dict, List, Optional, Any
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from utils.config import config
+from utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 def run_single_test(test_nodeid: str, project_root: Optional[Path] = None) -> Dict[str, Any]:
     if project_root is None:
@@ -81,17 +84,17 @@ def run_single_test(test_nodeid: str, project_root: Optional[Path] = None) -> Di
 def run_multiple_tests(test_nodeids: List[str], project_root: Optional[Path] = None) -> List[Dict[str, Any]]:
     results: List[Dict[str, Any]] = []
     for nodeid in test_nodeids:
-        print(f"Running test: {nodeid}")
+        logger.info(f"Running test: {nodeid}")
         result: Dict[str, Any] = run_single_test(nodeid, project_root)
         results.append(result)
 
         outcome: Optional[str] = result.get("outcome")
         if outcome == "passed":
-            print(f"  ✓ PASSED")
+            logger.info(f"  ✓ PASSED")
         elif outcome == "failed":
-            print(f"  ✗ FAILED")
+            logger.warning(f"  ✗ FAILED")
         else:
-            print(f"  ⊘ {outcome.upper() if outcome else 'UNKNOWN'}")
+            logger.info(f"  ⊘ {outcome.upper() if outcome else 'UNKNOWN'}")
 
     return results
 
@@ -135,7 +138,7 @@ def run_all_tests(project_root: Optional[Path] = None, parallel: bool = True) ->
         }
 
     except Exception as e:
-        print(f"Error running tests: {e}")
+        logger.error(f"Error running tests: {e}")
         return {
             "summary": {"total": 0, "passed": 0, "failed": 0},
             "tests": [],
@@ -170,8 +173,8 @@ def run_tests_parallel(
         "--dist=loadfile"
     ]
 
-    print(f"Running tests in parallel with {workers} workers...")
-    print(f"Command: {' '.join(cmd)}")
+    logger.info(f"Running tests in parallel with {workers} workers...")
+    logger.debug(f"Command: {' '.join(cmd)}")
 
     try:
         result: subprocess.CompletedProcess[str] = subprocess.run(
@@ -182,9 +185,9 @@ def run_tests_parallel(
             timeout=600
         )
 
-        print(result.stdout)
+        logger.debug(result.stdout)
         if result.stderr:
-            print(result.stderr)
+            logger.warning(result.stderr)
 
         if report_file.exists():
             with open(report_file, "r") as f:
@@ -201,7 +204,7 @@ def run_tests_parallel(
         }
 
     except subprocess.TimeoutExpired:
-        print("Test execution timed out after 600 seconds")
+        logger.error("Test execution timed out after 600 seconds")
         return {
             "summary": {"total": 0, "passed": 0, "failed": 0},
             "tests": [],
@@ -210,7 +213,7 @@ def run_tests_parallel(
         }
 
     except Exception as e:
-        print(f"Error running parallel tests: {e}")
+        logger.error(f"Error running parallel tests: {e}")
         return {
             "summary": {"total": 0, "passed": 0, "failed": 0},
             "tests": [],
@@ -222,14 +225,14 @@ if __name__ == "__main__":
     if len(sys.argv) > 1:
         test_nodeid: str = sys.argv[1]
         result: Dict[str, Any] = run_single_test(test_nodeid)
-        print(json.dumps(result, indent=2))
+        logger.debug(json.dumps(result, indent=2))
     else:
-        print("Running all tests...")
+        logger.info("Running all tests...")
         if config.PARALLEL_TEST_EXECUTION:
             result = run_tests_parallel()
         else:
             result = run_all_tests(parallel=False)
         summary: Dict[str, Any] = result.get("summary", {})
-        print(f"Total: {summary.get('total', 0)}")
-        print(f"Passed: {summary.get('passed', 0)}")
-        print(f"Failed: {summary.get('failed', 0)}")
+        logger.info(f"Total: {summary.get('total', 0)}")
+        logger.info(f"Passed: {summary.get('passed', 0)}")
+        logger.info(f"Failed: {summary.get('failed', 0)}")
