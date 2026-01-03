@@ -6,46 +6,21 @@ import sys
 from dataclasses import dataclass, asdict
 from importlib import util as importlib_util
 from pathlib import Path
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Dict, List, Optional, Set, Tuple, Any
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from utils.config import config
 from utils.logger import get_logger
 from utils.ai_client import AIClient
+from utils.app_metadata import load_app_metadata
 
 logger = get_logger(__name__)
-
-
-def load_app_metadata(project_root: Path) -> Dict:
-    metadata_path = project_root / "reports" / "app_metadata.json"
-    
-    if metadata_path.exists():
-        try:
-            with open(metadata_path, "r") as f:
-                metadata = json.load(f)
-            logger.info(f"Loaded app metadata: app_type={metadata.get('app_type')}, port={metadata.get('port')}")
-            return metadata
-        except json.JSONDecodeError as e:
-            logger.warning(f"Failed to parse app_metadata.json: {e}")
-    else:
-        logger.warning(f"No app_metadata.json found at {metadata_path}")
-    
-    return {
-        "app_type": "rest_api",
-        "framework": "unknown",
-        "languages": [],
-        "base_url": "http://localhost",
-        "port": 8080,
-        "auth_required": False
-    }
-
 
 @dataclass
 class ValidationIssue:
     type: str
     message: str
     suggestion: Optional[str] = None
-
 
 @dataclass
 class ValidationResult:
@@ -57,11 +32,10 @@ class ValidationResult:
     autofix_applied: bool = False
     healing_attempts: int = 0
 
-    def to_dict(self) -> Dict:
-        data = asdict(self)
+    def to_dict(self) -> Dict[str, Any]:
+        data: Dict[str, Any] = asdict(self)
         data["issues"] = [asdict(issue) for issue in self.issues or []]
         return data
-
 
 def _compile_check(py_path: Path) -> Tuple[bool, Optional[str]]:
     try:
@@ -70,11 +44,10 @@ def _compile_check(py_path: Path) -> Tuple[bool, Optional[str]]:
     except py_compile.PyCompileError as exc:
         return False, str(exc)
 
-
 def _extract_imports(code: str) -> Set[str]:
     imports: Set[str] = set()
     try:
-        tree = ast.parse(code)
+        tree: ast.Module = ast.parse(code)
     except SyntaxError:
         return imports
 
@@ -84,11 +57,10 @@ def _extract_imports(code: str) -> Set[str]:
                 imports.add(alias.name.split(".")[0])
         elif isinstance(node, ast.ImportFrom):
             if node.module:
-                module = node.module.split(".")[0]
+                module: str = node.module.split(".")[0]
                 if node.level == 0:
                     imports.add(module)
     return imports
-
 
 def _check_imports(modules: Set[str]) -> Tuple[bool, List[ValidationIssue], List[str]]:
     missing: List[ValidationIssue] = []
@@ -110,27 +82,26 @@ def _check_imports(modules: Set[str]) -> Tuple[bool, List[ValidationIssue], List
             raw_missing.append(module)
     return len(missing) == 0, missing, raw_missing
 
-
 def _auto_fix_imports(py_path: Path, code: str, missing_modules: List[str]) -> Tuple[bool, str]:
-    mapping = {
+    mapping: Dict[str, str] = {
         "uuid": "import uuid\n",
         "requests": "import requests\n",
         "pytest": "import pytest\n",
     }
     additions: List[str] = []
     for module in missing_modules:
-        statement = mapping.get(module)
+        statement: Optional[str] = mapping.get(module)
         if statement and statement not in code:
             additions.append(statement)
 
     if not additions:
         return False, code
 
-    lines = code.splitlines()
-    insert_idx = 0
+    lines: List[str] = code.splitlines()
+    insert_idx: int = 0
     while insert_idx < len(lines) and (lines[insert_idx].startswith("#") and "!" in lines[insert_idx]):
         insert_idx += 1
-    updated_code = (
+    updated_code: str = (
         "".join(additions) + "\n".join(lines[insert_idx:]) if insert_idx == 0
         else "\n".join(lines[:insert_idx]) + "\n" + "".join(additions) + "\n".join(lines[insert_idx:])
     )
@@ -141,42 +112,46 @@ def _auto_fix_imports(py_path: Path, code: str, missing_modules: List[str]) -> T
     py_path.write_text(updated_code)
     return True, updated_code
 
-
 def validate_tests(
     tests_dir: Path,
     allow_autofix: bool = True,
     max_healing_attempts: int = 3,
-    app_metadata: Dict = None
+    app_metadata: Optional[Dict[str, Any]] = None
 ) -> ValidationResult:
     logger.info("Validating tests in %s", tests_dir)
 
     if app_metadata is None:
         app_metadata = {}
 
-    test_files = sorted(tests_dir.glob("test_*.py"))
+    test_files: List[Path] = sorted(tests_dir.glob("test_*.py"))
     if not test_files:
-        issues = [ValidationIssue(type="missing-tests", message=f"No test_*.py files found in {tests_dir}")]
+        issues: List[ValidationIssue] = [ValidationIssue(type="missing-tests", message=f"No test_*.py files found in {tests_dir}")]
         return ValidationResult(target=str(tests_dir), syntax_ok=False, imports_ok=False, issues=issues)
 
-    client = AIClient()
-    healing_attempts = 0
-    autofix_applied = False
+    client: AIClient = AIClient()
+    healing_attempts: int = 0
+    autofix_applied: bool = False
 
     while healing_attempts <= max_healing_attempts:
-        issues: List[ValidationIssue] = []
-        syntax_ok = True
-        imports_ok = True
+        issues = []
+        syntax_ok: bool = True
+        imports_ok: bool = True
         file_content: Dict[str, str] = {}
 
         for test_file in test_files:
-            code = test_file.read_text()
+            code: str = test_file.read_text()
             file_content[str(test_file)] = code
+            file_syntax_ok: bool
+            syntax_error: Optional[str]
             file_syntax_ok, syntax_error = _compile_check(test_file)
             if not file_syntax_ok:
                 syntax_ok = False
                 issues.append(ValidationIssue(type="syntax-error", message=f"{test_file}: {syntax_error}"))
 
-            imports = _extract_imports(code)
+            imports: Set[str] = _extract_imports(code)
+            file_imports_ok: bool
+            import_issues: List[ValidationIssue]
+            missing_modules: List[str]
             file_imports_ok, import_issues, missing_modules = _check_imports(imports)
             if not file_imports_ok:
                 imports_ok = False
@@ -185,6 +160,8 @@ def validate_tests(
                     for issue in import_issues
                 )
                 if allow_autofix and missing_modules:
+                    applied: bool
+                    updated_code: str
                     applied, updated_code = _auto_fix_imports(test_file, code, missing_modules)
                     if applied:
                         autofix_applied = True
@@ -193,7 +170,7 @@ def validate_tests(
         ai_passed: Optional[bool] = None
         if syntax_ok and imports_ok:
             try:
-                review = client.validate_tests(file_content, app_metadata)
+                review: Dict[str, Any] = client.validate_tests(file_content, app_metadata)
                 ai_passed = review.get("status") == "pass"
                 for item in review.get("issues", []):
                     issues.append(
@@ -232,7 +209,7 @@ def validate_tests(
         healing_attempts += 1
         logger.info("Attempting AI healing for generated tests (attempt %s)", healing_attempts)
         try:
-            heal_payload = [
+            heal_payload: List[Dict[str, Any]] = [
                 {
                     "type": issue.type,
                     "message": issue.message,
@@ -240,7 +217,7 @@ def validate_tests(
                 }
                 for issue in issues
             ]
-            healed_files = client.heal_tests(file_content, heal_payload)
+            healed_files: Dict[str, str] = client.heal_tests(file_content, heal_payload)
             if healed_files:
                 for path_str, healed_code in healed_files.items():
                     if healed_code and healed_code.strip():
@@ -262,33 +239,31 @@ def validate_tests(
         healing_attempts=healing_attempts,
     )
 
-
 def _write_report(result: ValidationResult, report_path: Path) -> None:
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.write_text(json.dumps(result.to_dict(), indent=2))
     logger.info("Validation report written to %s", report_path)
 
-
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Validate generated pytest tests")
+    parser: argparse.ArgumentParser = argparse.ArgumentParser(description="Validate generated pytest tests")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     tests_parser = subparsers.add_parser("tests", help="Validate generated tests")
     tests_parser.add_argument("--tests-dir", default="tests/generated", help="Directory containing generated tests")
     tests_parser.add_argument("--report", default="reports/validation_tests.json")
 
-    args = parser.parse_args()
+    args: argparse.Namespace = parser.parse_args()
 
-    project_root = config.get_project_root()
+    project_root: Path = config.get_project_root()
     if str(project_root) not in sys.path:
         sys.path.insert(0, str(project_root))
 
-    app_metadata = load_app_metadata(project_root)
-    
-    result = validate_tests(project_root / args.tests_dir, app_metadata=app_metadata)
+    app_metadata: Dict[str, Any] = load_app_metadata(project_root)
+
+    result: ValidationResult = validate_tests(project_root / args.tests_dir, app_metadata=app_metadata)
     _write_report(result, project_root / args.report)
 
-    issues_to_log = [f"- {issue.type}: {issue.message}" for issue in result.issues or []]
+    issues_to_log: List[str] = [f"- {issue.type}: {issue.message}" for issue in result.issues or []]
     if issues_to_log:
         logger.info("Validation issues found:\n%s", "\n".join(issues_to_log))
 
@@ -298,7 +273,6 @@ def main() -> int:
 
     logger.error("Validation failed for %s", result.target)
     return 1
-
 
 if __name__ == "__main__":
     sys.exit(main())

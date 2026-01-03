@@ -109,9 +109,35 @@ stop_api() {
 
 trap stop_api EXIT
 
+start_analytics() {
+    if [ "$ENABLE_VECTOR_DB" = "true" ]; then
+        log_info "Starting analytics tracking..."
+        python3 -c "
+from utils.analytics import get_analytics
+analytics = get_analytics()
+analytics.start_run()
+print('Analytics run started')
+" 2>/dev/null || true
+    fi
+}
+
+end_analytics() {
+    if [ "$ENABLE_VECTOR_DB" = "true" ]; then
+        log_info "Finalizing analytics..."
+        python3 -c "
+from utils.analytics import get_analytics
+analytics = get_analytics()
+result = analytics.end_run()
+if result:
+    analytics.print_summary()
+    analytics.export_report()
+" 2>/dev/null || true
+    fi
+}
+
 run_analyzer() {
     log_step "Step 1: Analyzing Application Code & Documentation"
-    
+
     if python3 src/ai_engine/analyzer.py; then
         log_success "Analysis complete"
         
@@ -311,7 +337,8 @@ EOF
     echo "  • HTML Report:    reports/html/report.html"
     echo "  • Bug Report:     reports/BUGS.md"
     echo "  • Latest Summary: $(ls -t reports/summaries/summary_*.md 2>/dev/null | head -1)"
-    
+    [ -f "reports/analytics_report.json" ] && echo "  • Analytics:      reports/analytics_report.json"
+
     echo -e "\n${GREEN}✓ Workflow completed successfully!${NC}\n"
 }
 
@@ -328,12 +355,14 @@ main() {
     
     check_prerequisites
     start_api
+    start_analytics
     run_analyzer
     generate_tests
     validate_tests
     run_tests
     run_self_healing
     generate_reports
+    end_analytics
     display_final_summary
 }
 

@@ -2,16 +2,18 @@ import subprocess
 import json
 import sys
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Any
 
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from utils.config import config
 
-def run_single_test(test_nodeid: str, project_root: Optional[Path] = None) -> Dict:
+def run_single_test(test_nodeid: str, project_root: Optional[Path] = None) -> Dict[str, Any]:
     if project_root is None:
         project_root = Path(__file__).parent.parent.parent
-    
-    temp_report = project_root / "reports" / f"temp_test_report_{hash(test_nodeid)}.json"
-    
-    cmd = [
+
+    temp_report: Path = project_root / "reports" / f"temp_test_report_{hash(test_nodeid)}.json"
+
+    cmd: List[str] = [
         sys.executable, "-m", "pytest",
         test_nodeid,
         "--json-report",
@@ -19,25 +21,25 @@ def run_single_test(test_nodeid: str, project_root: Optional[Path] = None) -> Di
         "--tb=short",
         "-v"
     ]
-    
+
     try:
-        result = subprocess.run(
+        result: subprocess.CompletedProcess[str] = subprocess.run(
             cmd,
             cwd=str(project_root),
             capture_output=True,
             text=True,
             timeout=60
         )
-        
+
         if temp_report.exists():
             with open(temp_report, "r") as f:
-                report_data = json.load(f)
-            
+                report_data: Dict[str, Any] = json.load(f)
+
             temp_report.unlink()
-            
-            tests = report_data.get("tests", [])
+
+            tests: List[Dict[str, Any]] = report_data.get("tests", [])
             if tests:
-                test_result = tests[0]
+                test_result: Dict[str, Any] = tests[0]
                 return {
                     "nodeid": test_result.get("nodeid"),
                     "outcome": test_result.get("outcome"),
@@ -46,7 +48,7 @@ def run_single_test(test_nodeid: str, project_root: Optional[Path] = None) -> Di
                     "error": test_result.get("call", {}).get("longrepr", ""),
                     "exit_code": result.returncode
                 }
-        
+
         return {
             "nodeid": test_nodeid,
             "outcome": "passed" if result.returncode == 0 else "failed",
@@ -55,7 +57,7 @@ def run_single_test(test_nodeid: str, project_root: Optional[Path] = None) -> Di
             "error": result.stderr if result.returncode != 0 else "",
             "exit_code": result.returncode
         }
-    
+
     except subprocess.TimeoutExpired:
         return {
             "nodeid": test_nodeid,
@@ -65,7 +67,7 @@ def run_single_test(test_nodeid: str, project_root: Optional[Path] = None) -> Di
             "error": "Test execution timed out after 60 seconds",
             "exit_code": -1
         }
-    
+
     except Exception as e:
         return {
             "nodeid": test_nodeid,
@@ -76,32 +78,30 @@ def run_single_test(test_nodeid: str, project_root: Optional[Path] = None) -> Di
             "exit_code": -1
         }
 
-
-def run_multiple_tests(test_nodeids: List[str], project_root: Optional[Path] = None) -> List[Dict]:
-    results = []
+def run_multiple_tests(test_nodeids: List[str], project_root: Optional[Path] = None) -> List[Dict[str, Any]]:
+    results: List[Dict[str, Any]] = []
     for nodeid in test_nodeids:
         print(f"Running test: {nodeid}")
-        result = run_single_test(nodeid, project_root)
+        result: Dict[str, Any] = run_single_test(nodeid, project_root)
         results.append(result)
-        
-        outcome = result.get("outcome")
+
+        outcome: Optional[str] = result.get("outcome")
         if outcome == "passed":
             print(f"  ✓ PASSED")
         elif outcome == "failed":
             print(f"  ✗ FAILED")
         else:
-            print(f"  ⊘ {outcome.upper()}")
-    
+            print(f"  ⊘ {outcome.upper() if outcome else 'UNKNOWN'}")
+
     return results
 
-
-def run_all_tests(project_root: Optional[Path] = None) -> Dict:
+def run_all_tests(project_root: Optional[Path] = None, parallel: bool = True) -> Dict[str, Any]:
     if project_root is None:
         project_root = Path(__file__).parent.parent.parent
-    
-    report_file = project_root / "reports" / "pytest-report.json"
-    
-    cmd = [
+
+    report_file: Path = project_root / "reports" / "pytest-report.json"
+
+    cmd: List[str] = [
         sys.executable, "-m", "pytest",
         "tests/generated",
         "--json-report",
@@ -110,26 +110,30 @@ def run_all_tests(project_root: Optional[Path] = None) -> Dict:
         "--self-contained-html",
         "-v"
     ]
-    
+
+    if parallel and config.PARALLEL_TEST_EXECUTION:
+        workers: int = config.PYTEST_WORKERS
+        cmd.extend(["-n", str(workers)])
+
     try:
-        result = subprocess.run(
+        result: subprocess.CompletedProcess[str] = subprocess.run(
             cmd,
             cwd=str(project_root),
             capture_output=True,
             text=True,
             timeout=300
         )
-        
+
         if report_file.exists():
             with open(report_file, "r") as f:
                 return json.load(f)
-        
+
         return {
             "summary": {"total": 0, "passed": 0, "failed": 0},
             "tests": [],
             "exit_code": result.returncode
         }
-    
+
     except Exception as e:
         print(f"Error running tests: {e}")
         return {
@@ -138,16 +142,94 @@ def run_all_tests(project_root: Optional[Path] = None) -> Dict:
             "error": str(e)
         }
 
+def run_tests_parallel(
+    test_dir: str = "tests/generated",
+    project_root: Optional[Path] = None,
+    workers: Optional[int] = None
+) -> Dict[str, Any]:
+    if project_root is None:
+        project_root = Path(__file__).parent.parent.parent
+
+    if workers is None:
+        workers = config.PYTEST_WORKERS
+
+    report_file: Path = project_root / "reports" / "pytest-report.json"
+    html_report: Path = project_root / "reports" / "html" / "report.html"
+
+    html_report.parent.mkdir(parents=True, exist_ok=True)
+
+    cmd: List[str] = [
+        sys.executable, "-m", "pytest",
+        test_dir,
+        "-n", str(workers),
+        "--json-report",
+        f"--json-report-file={report_file}",
+        "--html", str(html_report),
+        "--self-contained-html",
+        "-v",
+        "--dist=loadfile"
+    ]
+
+    print(f"Running tests in parallel with {workers} workers...")
+    print(f"Command: {' '.join(cmd)}")
+
+    try:
+        result: subprocess.CompletedProcess[str] = subprocess.run(
+            cmd,
+            cwd=str(project_root),
+            capture_output=True,
+            text=True,
+            timeout=600
+        )
+
+        print(result.stdout)
+        if result.stderr:
+            print(result.stderr)
+
+        if report_file.exists():
+            with open(report_file, "r") as f:
+                report_data: Dict[str, Any] = json.load(f)
+            report_data["exit_code"] = result.returncode
+            return report_data
+
+        return {
+            "summary": {"total": 0, "passed": 0, "failed": 0},
+            "tests": [],
+            "exit_code": result.returncode,
+            "stdout": result.stdout,
+            "stderr": result.stderr
+        }
+
+    except subprocess.TimeoutExpired:
+        print("Test execution timed out after 600 seconds")
+        return {
+            "summary": {"total": 0, "passed": 0, "failed": 0},
+            "tests": [],
+            "error": "Test execution timed out",
+            "exit_code": -1
+        }
+
+    except Exception as e:
+        print(f"Error running parallel tests: {e}")
+        return {
+            "summary": {"total": 0, "passed": 0, "failed": 0},
+            "tests": [],
+            "error": str(e),
+            "exit_code": -1
+        }
 
 if __name__ == "__main__":
     if len(sys.argv) > 1:
-        test_nodeid = sys.argv[1]
-        result = run_single_test(test_nodeid)
+        test_nodeid: str = sys.argv[1]
+        result: Dict[str, Any] = run_single_test(test_nodeid)
         print(json.dumps(result, indent=2))
     else:
         print("Running all tests...")
-        result = run_all_tests()
-        summary = result.get("summary", {})
+        if config.PARALLEL_TEST_EXECUTION:
+            result = run_tests_parallel()
+        else:
+            result = run_all_tests(parallel=False)
+        summary: Dict[str, Any] = result.get("summary", {})
         print(f"Total: {summary.get('total', 0)}")
         print(f"Passed: {summary.get('passed', 0)}")
         print(f"Failed: {summary.get('failed', 0)}")

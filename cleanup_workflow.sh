@@ -81,6 +81,36 @@ if [ -d "tests/generated" ]; then
     log_success "Cleaned tests/generated/"
 fi
 
+if [ -d ".cache" ]; then
+    rm -rf .cache/*
+    log_success "Cleaned .cache/"
+fi
+
+if [ -d ".vector_store" ]; then
+    rm -rf .vector_store/*
+    log_success "Cleaned .vector_store/"
+fi
+
+if [ -d ".analytics" ]; then
+    rm -rf .analytics/*
+    log_success "Cleaned .analytics/"
+fi
+
+if [ -d ".change_snapshots" ]; then
+    rm -rf .change_snapshots/*
+    log_success "Cleaned .change_snapshots/"
+fi
+
+if [ -d ".analysis_cache" ]; then
+    rm -rf .analysis_cache/*
+    log_success "Cleaned .analysis_cache/"
+fi
+
+if [ -f "reports/analytics_report.json" ]; then
+    rm -f reports/analytics_report.json
+    log_success "Removed reports/analytics_report.json"
+fi
+
 if [ -f "logs/workflow.log" ]; then
     rm -f logs/workflow.log
     log_success "Removed logs/workflow.log"

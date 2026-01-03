@@ -31,6 +31,13 @@ An intelligent test automation framework that uses Claude (Anthropic) to automat
   - Actual defects are flagged for investigation with detailed bug reports
 - **Automated Execution**: Runs generated tests with comprehensive reporting
 - **AI-Generated Summaries**: Creates detailed markdown reports with failure analysis
+- **Vector Database Integration** (Optional): Enhanced capabilities with ChromaDB
+  - **Healing Knowledge Base**: Stores successful fixes for pattern matching
+  - **Classification Cache**: Caches failure classifications with semantic search
+  - **Semantic Test Deduplication**: Removes duplicate tests using embeddings
+  - **Code RAG**: Retrieval-augmented analysis for better context
+  - **Change Detection**: Smart test regeneration based on code changes
+  - **Workflow Analytics**: Tracks metrics across runs with insights
 
 ## Project Structure
 
@@ -49,7 +56,16 @@ AI_Test_Automation/
 │   │   └── report_summarizer.py  # AI report generation
 │   └── utils/
 │       ├── ai_client.py          # Claude/Anthropic API client
-│       └── config.py             # Configuration settings
+│       ├── config.py             # Configuration settings
+│       ├── cache.py              # Analysis caching
+│       ├── embeddings.py         # Sentence transformer embeddings
+│       ├── vector_store.py       # ChromaDB vector store
+│       ├── healing_kb.py         # Healing knowledge base
+│       ├── classification_cache.py # Failure classification cache
+│       ├── test_deduplicator.py  # Semantic test deduplication
+│       ├── code_rag.py           # Code RAG for analysis
+│       ├── change_detector.py    # Code change detection
+│       └── analytics.py          # Workflow analytics
 ├── tests/
 │   └── generated/                # AI-generated tests (self-contained)
 ├── test_templates/
@@ -64,6 +80,10 @@ AI_Test_Automation/
 ├── cleanup_workflow.sh           # Cleanup script
 ├── requirements.txt
 ├── pytest.ini
+├── .vector_store/                # ChromaDB data (auto-created)
+├── .analytics/                   # Analytics data (auto-created)
+├── .change_snapshots/            # Change detection snapshots (auto-created)
+├── .analysis_cache/              # Analysis cache (auto-created)
 └── README.md
 ```
 
@@ -313,6 +333,11 @@ Comprehensive reports are generated:
 | `MAX_TESTS_PER_CATEGORY` | `5` | Maximum tests generated per category |
 | `MAX_HEALING_ATTEMPTS` | `3` | Max healing attempts per test |
 | `MAX_TOKENS_GENERATION` | `8000` | Token limit for test generation |
+| `ENABLE_VECTOR_DB` | `false` | Enable Vector DB features |
+| `VECTOR_DB_PATH` | `.vector_store` | ChromaDB storage path |
+| `EMBEDDING_MODEL` | `all-MiniLM-L6-v2` | Sentence transformer model |
+| `ENABLE_CACHE` | `true` | Enable analysis caching |
+| `CACHE_TTL_SECONDS` | `3600` | Cache TTL in seconds |
 
 ### pytest.ini
 ```ini
@@ -424,11 +449,16 @@ The repository includes a complete working example in `app/sample_api.py`:
 
 ## Dependencies
 
+**Core:**
 - `anthropic>=0.18.0` - Claude AI integration
 - `pytest==8.3.3` - Test framework
 - `pytest-html==4.1.1` - HTML reporting
 - `pytest-json-report==1.5.0` - JSON reporting
 - `tenacity>=8.2.0` - Retry logic
+
+**Vector DB (Optional):**
+- `chromadb>=0.4.0` - Vector database
+- `sentence-transformers>=2.2.0` - Text embeddings
 
 ## Key Features Documentation
 
